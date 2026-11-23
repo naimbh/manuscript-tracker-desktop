@@ -1,0 +1,532 @@
+[
+    {
+        "name": "list-papers",
+        "title": "List Papers",
+        "description": "List the user’s papers with stage, current venue, manuscript ID, decision and days in review. Filter by stage or search text.",
+        "inputSchema": {
+            "properties": {
+                "stage": {
+                    "description": "Only papers at this stage.",
+                    "enum": [
+                        "idea",
+                        "drafting",
+                        "ready",
+                        "submitted",
+                        "under_review",
+                        "revision",
+                        "accepted",
+                        "published",
+                        "shelved"
+                    ],
+                    "type": "string"
+                },
+                "search": {
+                    "description": "Text to look for in titles and keywords.",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "annotations": {
+            "title": "List Papers",
+            "readOnlyHint": true
+        }
+    },
+    {
+        "name": "get-paper",
+        "title": "Get Paper",
+        "description": "Get one paper with its abstract, authors, every submission (venue, IDs, dates, decision, notes, reviewer checklist) and the next-venue queue.",
+        "inputSchema": {
+            "properties": {
+                "paper_id": {
+                    "description": "The paper id from list-papers.",
+                    "type": "integer"
+                }
+            },
+            "type": "object",
+            "required": [
+                "paper_id"
+            ]
+        },
+        "annotations": {
+            "title": "Get Paper",
+            "readOnlyHint": true
+        }
+    },
+    {
+        "name": "add-paper",
+        "title": "Add Paper",
+        "description": "Add a new paper to the tracker. Check list-papers first so the paper is not added twice. Stage defaults to drafting.",
+        "inputSchema": {
+            "properties": {
+                "title": {
+                    "type": "string"
+                },
+                "short_title": {
+                    "description": "A short name shown in lists, such as “Paper 1”.",
+                    "type": "string"
+                },
+                "stage": {
+                    "enum": [
+                        "idea",
+                        "drafting",
+                        "ready",
+                        "submitted",
+                        "under_review",
+                        "revision",
+                        "accepted",
+                        "published",
+                        "shelved"
+                    ],
+                    "type": "string"
+                },
+                "started_on": {
+                    "description": "YYYY-MM-DD, when work on the paper began. Defaults to today for a new paper.",
+                    "type": "string"
+                },
+                "abstract": {
+                    "type": "string"
+                },
+                "keywords": {
+                    "description": "Separated by semicolons.",
+                    "type": "string"
+                },
+                "method": {
+                    "description": "The specific analytic method, at most 255 characters.",
+                    "type": "string"
+                },
+                "dataset": {
+                    "description": "The data the paper uses, at most 255 characters.",
+                    "type": "string"
+                },
+                "tags": {
+                    "description": "For example [\"Thesis\", \"Preprint\"].",
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "overleaf_url": {
+                    "type": "string"
+                },
+                "drive_url": {
+                    "type": "string"
+                },
+                "preprint_server": {
+                    "description": "For example “arXiv (cs.CY)”.",
+                    "type": "string"
+                },
+                "preprint_url": {
+                    "type": "string"
+                },
+                "preprint_on": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                }
+            },
+            "type": "object",
+            "required": [
+                "title"
+            ]
+        },
+        "annotations": {
+            "title": "Add Paper"
+        }
+    },
+    {
+        "name": "update-paper",
+        "title": "Update Paper",
+        "description": "Change a paper’s details: title, stage, abstract, keywords, method, data, tags, notes, links or preprint. Only the fields you send are changed.",
+        "inputSchema": {
+            "properties": {
+                "paper_id": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "short_title": {
+                    "description": "A short name shown in lists, such as “Paper 1”.",
+                    "type": "string"
+                },
+                "stage": {
+                    "enum": [
+                        "idea",
+                        "drafting",
+                        "ready",
+                        "submitted",
+                        "under_review",
+                        "revision",
+                        "accepted",
+                        "published",
+                        "shelved"
+                    ],
+                    "type": "string"
+                },
+                "started_on": {
+                    "description": "YYYY-MM-DD, when work on the paper began. Defaults to today for a new paper.",
+                    "type": "string"
+                },
+                "abstract": {
+                    "type": "string"
+                },
+                "keywords": {
+                    "description": "Separated by semicolons.",
+                    "type": "string"
+                },
+                "method": {
+                    "description": "The specific analytic method, at most 255 characters.",
+                    "type": "string"
+                },
+                "dataset": {
+                    "description": "The data the paper uses, at most 255 characters.",
+                    "type": "string"
+                },
+                "tags": {
+                    "description": "For example [\"Thesis\", \"Preprint\"].",
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "overleaf_url": {
+                    "type": "string"
+                },
+                "drive_url": {
+                    "type": "string"
+                },
+                "preprint_server": {
+                    "description": "For example “arXiv (cs.CY)”.",
+                    "type": "string"
+                },
+                "preprint_url": {
+                    "type": "string"
+                },
+                "preprint_on": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                }
+            },
+            "type": "object",
+            "required": [
+                "paper_id"
+            ]
+        },
+        "annotations": {
+            "title": "Update Paper",
+            "idempotentHint": true
+        }
+    },
+    {
+        "name": "record-submission",
+        "title": "Record Submission",
+        "description": "Record that a paper was sent to a journal or conference. Creates the venue in the library if it is new, and makes this the current submission.",
+        "inputSchema": {
+            "properties": {
+                "paper_id": {
+                    "type": "integer"
+                },
+                "venue": {
+                    "description": "Journal or conference name.",
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "Only used when the venue is new.",
+                    "enum": [
+                        "journal",
+                        "conference"
+                    ],
+                    "type": "string"
+                },
+                "manuscript_id": {
+                    "type": "string"
+                },
+                "submitted_on": {
+                    "description": "YYYY-MM-DD. Defaults to today.",
+                    "type": "string"
+                },
+                "portal_url": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                }
+            },
+            "type": "object",
+            "required": [
+                "paper_id",
+                "venue"
+            ]
+        },
+        "annotations": {
+            "title": "Record Submission"
+        }
+    },
+    {
+        "name": "update-submission",
+        "title": "Update Submission",
+        "description": "Change a submission: manuscript ID, portal link, submitted date, status (submitted, with_editor, pending = under review, awaiting_decision, returned, or a decision), the date that status began, a note, or whether it is the paper’s current journal. Only the fields you send are changed.",
+        "inputSchema": {
+            "properties": {
+                "submission_id": {
+                    "type": "integer"
+                },
+                "manuscript_id": {
+                    "type": "string"
+                },
+                "portal_url": {
+                    "type": "string"
+                },
+                "submitted_on": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "status": {
+                    "enum": [
+                        "submitted",
+                        "with_editor",
+                        "pending",
+                        "awaiting_decision",
+                        "returned",
+                        "desk_reject",
+                        "reject",
+                        "major",
+                        "minor",
+                        "accept",
+                        "withdrawn"
+                    ],
+                    "type": "string"
+                },
+                "status_on": {
+                    "description": "YYYY-MM-DD, the day the status began. Defaults to today when status is set.",
+                    "type": "string"
+                },
+                "decision_on": {
+                    "description": "YYYY-MM-DD, for decisions.",
+                    "type": "string"
+                },
+                "revision_due_on": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "note": {
+                    "description": "Added to the end of the existing note.",
+                    "type": "string"
+                },
+                "current": {
+                    "description": "true makes this the paper’s current journal.",
+                    "type": "boolean"
+                }
+            },
+            "type": "object",
+            "required": [
+                "submission_id"
+            ]
+        },
+        "annotations": {
+            "title": "Update Submission"
+        }
+    },
+    {
+        "name": "attach-file",
+        "title": "Attach File",
+        "description": "Attach a file from this computer (manuscript, anonymized manuscript, cover letter, response to reviewers, proof PDF or supplementary file) to a paper, optionally to one submission. Works only with the local server, because it reads a local path.",
+        "inputSchema": {
+            "properties": {
+                "paper_id": {
+                    "type": "integer"
+                },
+                "path": {
+                    "description": "Absolute path to the file on this computer.",
+                    "type": "string"
+                },
+                "kind": {
+                    "enum": [
+                        "manuscript",
+                        "anonymized",
+                        "cover",
+                        "response",
+                        "proof",
+                        "supplementary"
+                    ],
+                    "type": "string"
+                },
+                "label": {
+                    "description": "A short label, such as “ITD submission PDF”.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "File name to show. Defaults to the file’s own name.",
+                    "type": "string"
+                },
+                "submission_id": {
+                    "type": "integer"
+                }
+            },
+            "type": "object",
+            "required": [
+                "paper_id",
+                "path"
+            ]
+        },
+        "annotations": {
+            "title": "Attach File"
+        }
+    },
+    {
+        "name": "record-decision",
+        "title": "Record Decision",
+        "description": "Record an editor’s decision on a submission or update its status: submitted, with_editor, pending (under review), awaiting_decision, returned (to the author for fixes), desk_reject, reject, major, minor, accept or withdrawn.",
+        "inputSchema": {
+            "properties": {
+                "submission_id": {
+                    "description": "From get-paper.",
+                    "type": "integer"
+                },
+                "decision": {
+                    "enum": [
+                        "submitted",
+                        "with_editor",
+                        "pending",
+                        "awaiting_decision",
+                        "returned",
+                        "desk_reject",
+                        "reject",
+                        "major",
+                        "minor",
+                        "accept",
+                        "withdrawn"
+                    ],
+                    "type": "string"
+                },
+                "date": {
+                    "description": "YYYY-MM-DD. Defaults to today.",
+                    "type": "string"
+                },
+                "revision_due_on": {
+                    "description": "YYYY-MM-DD, for revisions.",
+                    "type": "string"
+                },
+                "note": {
+                    "description": "Appended to the submission notes.",
+                    "type": "string"
+                }
+            },
+            "type": "object",
+            "required": [
+                "submission_id",
+                "decision"
+            ]
+        },
+        "annotations": {
+            "title": "Record Decision"
+        }
+    },
+    {
+        "name": "list-deadlines",
+        "title": "List Deadlines",
+        "description": "List upcoming deadlines with days left, including revision due dates.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        },
+        "annotations": {
+            "title": "List Deadlines",
+            "readOnlyHint": true
+        }
+    },
+    {
+        "name": "add-deadline",
+        "title": "Add Deadline",
+        "description": "Add a deadline, optionally linked to a paper.",
+        "inputSchema": {
+            "properties": {
+                "title": {
+                    "type": "string"
+                },
+                "due_on": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "paper_id": {
+                    "type": "integer"
+                }
+            },
+            "type": "object",
+            "required": [
+                "title",
+                "due_on"
+            ]
+        },
+        "annotations": {
+            "title": "Add Deadline"
+        }
+    },
+    {
+        "name": "search-venues",
+        "title": "Search Venues",
+        "description": "Search the venue library: conferences (next edition, deadline, proceedings) and journals (first decision, acceptance rate, fees).",
+        "inputSchema": {
+            "properties": {
+                "kind": {
+                    "enum": [
+                        "journal",
+                        "conference"
+                    ],
+                    "type": "string"
+                },
+                "search": {
+                    "description": "Name or field, e.g. \"CSCW\" or \"information systems\".",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "annotations": {
+            "title": "Search Venues",
+            "readOnlyHint": true
+        }
+    },
+    {
+        "name": "list-opportunities",
+        "title": "List Opportunities",
+        "description": "List calls for papers found by the opportunity scans, best fit first.",
+        "inputSchema": {
+            "properties": {
+                "status": {
+                    "description": "Defaults to new.",
+                    "enum": [
+                        "new",
+                        "saved",
+                        "dismissed"
+                    ],
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "annotations": {
+            "title": "List Opportunities",
+            "readOnlyHint": true
+        }
+    },
+    {
+        "name": "list-publications",
+        "title": "List Publications",
+        "description": "List published work with venue, year and Google Scholar citation counts, plus the citation summary.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        },
+        "annotations": {
+            "title": "List Publications",
+            "readOnlyHint": true
+        }
+    }
+]

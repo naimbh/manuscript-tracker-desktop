@@ -1,0 +1,67 @@
+/* Desktop (Tauri) additions on top of the web app's CSS. */
+
+/* CSS that Flux's JavaScript injects at runtime on the web. */
+@layer base {
+    dialog, ::backdrop { margin: auto; }
+}
+[data-flux-allow-scroll] { pointer-events: auto; }
+
+/* Native feel: chrome is not selectable and uses the arrow cursor; content text stays selectable. */
+html { cursor: default; -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+main, [data-flux-main] { -webkit-user-select: text; user-select: text; }
+[data-flux-main] :is(button, [role="button"], [data-flux-button], [data-flux-label], [data-flux-heading], nav, [data-flux-navlist], [data-flux-navbar], ui-label, label) { -webkit-user-select: none; user-select: none; }
+input, textarea, select, [contenteditable] { -webkit-user-select: text; user-select: text; cursor: auto; }
+/* Everything clickable shows the hand cursor; disabled controls fall back to the arrow. */
+a[href], button, [role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="menuitemradio"], [role="switch"],
+summary, label[for], select, input[type="checkbox"], input[type="radio"], input[type="range"], input[type="color"],
+ui-checkbox, ui-radio, ui-switch, ui-menu-radio, ui-menu-checkbox, [data-flux-menu-item], [data-flux-button],
+[data-flux-navlist-item], [data-flux-tab], [data-flux-radio], [data-flux-checkbox], [data-flux-switch],
+[data-flux-modal-trigger] > *, [data-flux-tooltip] > button, [data-sidebar-toggle], .cursor-pointer, [onclick] { cursor: pointer; }
+button:disabled, [disabled], [aria-disabled="true"], [data-disabled] { cursor: default !important; }
+img, a { -webkit-user-drag: none; }
+
+/* Window materials (html.material-sidebar on macOS vibrancy, html.material-mica on Windows 11): the page is transparent
+   so the material shows through the chrome; content panels stay opaque. Without a material nothing changes. */
+:is(.material-sidebar, .material-mica) body { background: transparent !important; }
+:is(.material-sidebar, .material-mica) [data-flux-sidebar] {
+    background-color: rgb(255 255 255 / 0.18) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+}
+:is(.material-sidebar, .material-mica).dark [data-flux-sidebar] { background-color: rgb(24 24 27 / 0.22) !important; }
+/* Windows (Mica): never rely on the material for legibility. A semi-opaque themed sidebar reads well with or without
+   Mica behind it (a dark app on a light system, Windows 10, remote sessions). macOS keeps the plain vibrancy. */
+.material-mica [data-flux-sidebar] { background-color: rgb(255 255 255 / 0.7) !important; }
+.material-mica.dark [data-flux-sidebar] { background-color: rgb(24 24 27 / 0.85) !important; }
+:is(.material-sidebar, .material-mica) [data-flux-main],
+:is(.material-sidebar, .material-mica) [data-flux-header] {
+    background-color: #f7f8fc;
+    background-image: linear-gradient(180deg, color-mix(in oklab, var(--color-indigo-100) 35%, transparent), transparent 260px);
+}
+:is(.material-sidebar, .material-mica).dark [data-flux-main],
+:is(.material-sidebar, .material-mica).dark [data-flux-header] { background-color: var(--color-zinc-950); background-image: none; }
+
+/* Faster toasts (<= 200 ms) and no motion when the user asks for less. */
+ui-toast [data-flux-toast-dialog],
+ui-toast [data-flux-toast-dialog].showing { transition-duration: 0.15s; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+/* Scrollbars: slim, rounded and quiet until hovered, in light and dark mode. */
+:root { --sb-thumb: rgb(113 113 122 / 0.28); --sb-thumb-hover: rgb(99 102 241 / 0.55); }
+.dark { --sb-thumb: rgb(212 212 216 / 0.18); --sb-thumb-hover: rgb(129 140 248 / 0.6); }
+::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--sb-thumb);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  min-height: 36px;
+  transition: background-color .15s;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--sb-thumb-hover); border-width: 2px; }
+::-webkit-scrollbar-thumb:active { background-color: var(--sb-thumb-hover); border-width: 2px; }
+::-webkit-scrollbar-button { display: none; height: 0; width: 0; }

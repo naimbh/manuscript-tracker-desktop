@@ -1,0 +1,19 @@
+# Dependencies and build output
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Test output
+e2e/screenshots/
+
+# Local files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+.env
+.env.*
+.idea/
+.vscode/

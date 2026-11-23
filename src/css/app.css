@@ -1,0 +1,162 @@
+@import 'tailwindcss';
+@import './flux.css';
+
+@source "../**/*.vue";
+@source "../**/*.js";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+    --color-zinc-50: #fafafa;
+    --color-zinc-100: #f5f5f5;
+    --color-zinc-200: #e5e5e5;
+    --color-zinc-300: #d4d4d4;
+    --color-zinc-400: #a3a3a3;
+    --color-zinc-500: #737373;
+    --color-zinc-600: #525252;
+    --color-zinc-700: #404040;
+    --color-zinc-800: #262626;
+    --color-zinc-900: #171717;
+    --color-zinc-950: #0a0a0a;
+
+    --color-accent: var(--color-indigo-600);
+    --color-accent-content: var(--color-indigo-600);
+    --color-accent-foreground: var(--color-white);
+}
+
+@layer theme {
+    .dark {
+        --color-accent: var(--color-indigo-500);
+        --color-accent-content: var(--color-indigo-300);
+        --color-accent-foreground: var(--color-white);
+    }
+}
+
+@layer base {
+
+    *,
+    ::after,
+    ::before,
+    ::backdrop,
+    ::file-selector-button {
+        border-color: var(--color-gray-200, currentColor);
+    }
+}
+
+[data-flux-field] {
+    @apply grid content-start gap-2;
+}
+
+[data-flux-label] {
+    @apply  !mb-0 !leading-tight;
+}
+
+input:focus[data-flux-control],
+textarea:focus[data-flux-control],
+select:focus[data-flux-control] {
+    @apply outline-hidden ring-2 ring-accent ring-offset-2 ring-offset-accent-foreground;
+}
+
+/* \[:where(&)\]:size-4 {
+    @apply size-4;
+} */
+
+/* Manuscript Tracker */
+html { -webkit-font-smoothing: antialiased; font-feature-settings: "cv11", "ss01"; }
+/* Entrance animations play only inside [data-entering] (the route view for its first moments, or a panel that has just
+   opened; see lib/motion.js), so data refreshes never replay them or blink rows that move. */
+:where([data-entering]) .page-in, .page-in:where([data-entering]) { animation: page-in .22s cubic-bezier(.2,.7,.2,1) both; }
+@keyframes page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.panel { @apply rounded-xl border border-zinc-200/80 bg-white dark:border-zinc-700/70 dark:bg-zinc-900; }
+.eyebrow { @apply text-[11px] font-semibold uppercase tracking-[.08em] text-zinc-400 dark:text-zinc-500; }
+.num { font-variant-numeric: tabular-nums; }
+.clock-track { @apply h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800; }
+.clock-fill { @apply h-full rounded-full transition-[width] duration-500; }
+.row-link { @apply block rounded-lg px-3 py-2.5 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/70; }
+.row-link[aria-current="page"] { @apply bg-white shadow-xs ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700; }
+.kbd { @apply inline-flex h-5 min-w-5 items-center justify-center rounded border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400; }
+@media (prefers-reduced-motion: reduce) { .page-in { animation: none; } .clock-fill { transition: none; } }
+
+/* Motion & graphics */
+:where([data-entering]) .stagger > * { animation: page-in .38s cubic-bezier(.2,.7,.2,1) both; }
+:where([data-entering]) .stagger > *:nth-child(1){animation-delay:.02s}:where([data-entering]) .stagger > *:nth-child(2){animation-delay:.06s}:where([data-entering]) .stagger > *:nth-child(3){animation-delay:.10s}
+:where([data-entering]) .stagger > *:nth-child(4){animation-delay:.14s}:where([data-entering]) .stagger > *:nth-child(5){animation-delay:.18s}:where([data-entering]) .stagger > *:nth-child(6){animation-delay:.22s}
+:where([data-entering]) .stagger > *:nth-child(7){animation-delay:.26s}:where([data-entering]) .stagger > *:nth-child(8){animation-delay:.30s}:where([data-entering]) .stagger > *:nth-child(n+9){animation-delay:.34s}
+:where([data-entering]) .enter-up { animation: page-in .4s cubic-bezier(.2,.7,.2,1) both; animation-delay: var(--d, 0s); }
+.lift { @apply transition-shadow duration-200 ease-out hover:shadow-lg hover:shadow-zinc-900/5 dark:hover:shadow-black/30; }
+.hero {
+  background:
+    radial-gradient(60% 120% at 0% 0%, color-mix(in oklab, var(--color-indigo-500) 22%, transparent), transparent 60%),
+    radial-gradient(50% 120% at 100% 0%, color-mix(in oklab, var(--color-fuchsia-500) 14%, transparent), transparent 60%),
+    radial-gradient(60% 140% at 60% 120%, color-mix(in oklab, var(--color-sky-400) 16%, transparent), transparent 60%);
+}
+.hero-grid { background-image: linear-gradient(to right, color-mix(in oklab, currentColor 7%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in oklab, currentColor 7%, transparent) 1px, transparent 1px); background-size: 28px 28px; mask-image: radial-gradient(70% 90% at 50% 0%, #000, transparent); }
+.ring-track { stroke: var(--color-zinc-200); } .dark .ring-track { stroke: var(--color-zinc-800); }
+.ring-fill { transition: stroke-dashoffset 1.1s cubic-bezier(.2,.7,.2,1); }
+.draw { stroke-dasharray: 1; stroke-dashoffset: 0; }
+:where([data-entering]) .draw { stroke-dashoffset: 1; animation: draw 1.2s cubic-bezier(.2,.7,.2,1) .15s forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.grow-x { transform-origin: left; }
+:where([data-entering]) .grow-x { animation: grow-x .9s cubic-bezier(.2,.7,.2,1) both; }
+.grow-y { transform-origin: bottom; }
+:where([data-entering]) .grow-y { animation: grow-y .9s cubic-bezier(.2,.7,.2,1) both; animation-delay: var(--d, 0s); }
+@keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(1.6); } }
+.float { animation: float 6s ease-in-out infinite; }
+@keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.tab-ink { @apply absolute bottom-0 h-0.5 rounded-full bg-indigo-600 transition-all duration-300 ease-out dark:bg-indigo-400; }
+@media (prefers-reduced-motion: reduce) { .stagger > *, .draw, .grow-x, .grow-y, .enter-up, .pulse-dot, .float { animation: none !important; stroke-dashoffset: 0; } .ring-fill { transition: none; } }
+
+/* Route changes: a quick crossfade with both pages stacked (each .route-page fills the main area; see App.vue). */
+.route-enter-active { transition: opacity .14s cubic-bezier(.2,.7,.2,1), transform .14s cubic-bezier(.2,.7,.2,1); }
+.route-leave-active { transition: opacity .12s ease-out; pointer-events: none; }
+.route-enter-from { opacity: 0; }
+.route-enter-from:not([data-full-bleed]) { transform: translateY(4px); }
+.route-leave-to { opacity: 0; }
+.route-page > .page-in { animation: none !important; }
+
+/* Lists (UiList): items fade in/out and slide into place. */
+.list-move { transition: transform .18s cubic-bezier(.2,.7,.2,1); }
+.list-enter-active, .list-leave-active { transition: opacity .18s ease-out, transform .18s ease-out; }
+.list-enter-from, .list-leave-to { opacity: 0; transform: translateY(4px); }
+.list-leave-active { pointer-events: none; z-index: 0; }
+
+/* The main scroller keeps room for its scrollbar, so pages do not shift sideways when they grow. */
+[data-shell-scroll] { scrollbar-gutter: stable; }
+@media (prefers-reduced-motion: reduce) {
+  .route-enter-active, .route-leave-active, .list-move, .list-enter-active, .list-leave-active { transition: none !important; }
+}
+
+@keyframes scan { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+[x-cloak] { display: none !important; }
+@keyframes grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+/* Mouse clicks should not leave focus rings; keyboard focus still shows one. */
+button:focus:not(:focus-visible), a:focus:not(:focus-visible), [data-flux-button]:focus:not(:focus-visible) { outline: none; box-shadow: none; }
+:where(main button, main a, main [data-flux-button]):focus-visible { outline: 2px solid var(--color-indigo-500); outline-offset: 2px; border-radius: .5rem; }
+/* Sidebar: no outline after mouse clicks or wire:navigate; keyboard focus gets a soft inset ring. */
+:is([data-flux-sidebar], ui-sidebar) :where(a, button):focus { outline: none; }
+:is([data-flux-sidebar], ui-sidebar) :where(a, button):focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-indigo-500) 45%, transparent); border-radius: .5rem; }
+
+.card { background: #fff; border-radius: 1rem; box-shadow: 0 0 0 1px rgba(16,24,40,.06); }
+.dark .card { background: var(--color-zinc-900); box-shadow: 0 0 0 1px rgba(255,255,255,.06); }
+
+/* Soft, low-glare surface: a faint cool off-white instead of pure white */
+.soft-bg { background-color: #f7f8fc; background-image: linear-gradient(180deg, color-mix(in oklab, var(--color-indigo-100) 35%, transparent), transparent 260px); }
+.dark .soft-bg { background-color: var(--color-zinc-950); background-image: none; }
+.panel { box-shadow: 0 1px 2px rgba(30,41,59,.04); }
+
+/* Touch screens have no hover: always show controls that otherwise appear on hover. */
+@media (hover: none) {
+  .group-hover\:opacity-100, .sm\:group-hover\:opacity-100 { opacity: 1 !important; }
+}
+/* Phones: bigger tap targets for small icon-only buttons. */
+@media (max-width: 639px) {
+  [data-flux-button][data-flux-button-square] { min-height: 2rem; min-width: 2rem; }
+}
+
+/* Native date inputs ignore grid widths on iOS/Chrome mobile. */
+input[type="date"] { min-width: 0; width: 100%; }

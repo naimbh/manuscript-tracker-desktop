@@ -1,0 +1,46 @@
+{
+  "app": "manuscript-tracker", "version": 2, "exported_at": "2026-11-20T10:00:00Z",
+  "profile": { "name": "Alex Demo", "interests": "human-computer interaction, platform work, digital health" },
+  "venues": [
+    { "name": "Computer Supported Cooperative Work (CSCW)", "kind": "journal", "publisher": "Springer", "quartile": "Q1", "acceptance_rate": "22%", "first_decision": "60 days", "review_type": "double", "decision_days": 90, "preprint_policy": "allowed", "website_url": "https://example.org/cscw", "watch": true },
+    { "name": "ACM CHI Conference", "kind": "conference", "publisher": "ACM", "rank": "A*", "deadline_on": "2026-12-11", "deadline_label": "Full papers", "review_type": "double", "decision_days": 75, "preprint_policy": "allowed", "website_url": "https://example.org/chi" },
+    { "name": "Information Systems Journal", "kind": "journal", "publisher": "Wiley", "quartile": "Q1", "review_type": "double", "decision_days": 120, "preprint_policy": "after", "website_url": "https://example.org/isj" },
+    { "name": "New Media & Society", "kind": "journal", "publisher": "SAGE", "quartile": "Q1", "review_type": "double", "decision_days": 100, "preprint_policy": "unknown" },
+    { "name": "arXiv", "kind": "preprint", "publisher": "Cornell University", "review_type": "none" }
+  ],
+  "papers": [
+    { "title": "Algorithmic Management and Gig Workers’ Everyday Resistance", "short_title": "Gig resistance", "stage": "under_review", "started_on": "2025-09-01", "tags": ["Platform work", "Qualitative"], "abstract": "An interview study of 32 ride-hailing drivers and the tactics they use to work around algorithmic control.", "method": "Interviews", "keywords": "gig work, algorithmic management",
+      "submissions": [
+        { "venue": "Information Systems Journal", "manuscript_id": "ISJ-2026-0112", "submitted_on": "2026-03-02", "status_on": "2026-05-20", "decision": "reject", "is_current": false, "decision_on": "2026-05-20" },
+        { "venue": "Computer Supported Cooperative Work (CSCW)", "manuscript_id": "COSU-D-26-00451", "submitted_on": "2026-07-14", "status_on": "2026-08-02", "decision": "pending", "is_current": true }
+      ],
+      "queue": ["New Media & Society"],
+      "authors": [ { "name": "Alex Demo", "affiliation": "Example University", "corresponding": true, "roles": ["Conceptualization", "Writing – original draft"] }, { "name": "Sam Coauthor", "affiliation": "Sample Institute", "roles": ["Formal analysis"] } ],
+      "deadlines": [] },
+    { "title": "Designing Offline-First Health Records for Rural Clinics", "short_title": "Offline health records", "stage": "revision", "started_on": "2025-05-10", "tags": ["Digital health", "Design"], "method": "Design study",
+      "submissions": [
+        { "venue": "ACM CHI Conference", "manuscript_id": "chi26-2231", "submitted_on": "2026-09-10", "status_on": "2026-11-05", "decision": "major", "is_current": true, "decision_on": "2026-11-05", "revision_due_on": "2026-12-20",
+          "revision_items": [ { "comment": "R1: Clarify the sampling of clinics.", "response": "Added a table of clinic characteristics.", "done": true }, { "comment": "R2: Discuss limitations of the field deployment.", "done": false }, { "comment": "AC: Tighten the related-work section.", "done": false } ] }
+      ],
+      "authors": [ { "name": "Alex Demo", "corresponding": true } ],
+      "deadlines": [ { "title": "Send revised draft to co-authors", "due_on": "2026-12-05" } ] },
+    { "title": "Who Reads the Terms? A Survey of Consent Practices", "stage": "ready", "started_on": "2026-02-01", "tags": ["Survey"], "queue": ["New Media & Society", "Information Systems Journal"], "authors": [ { "name": "Alex Demo" } ] },
+    { "title": "Notes Toward a Theory of Infrastructural Care", "stage": "drafting", "started_on": "2026-10-01", "tags": ["Theory"], "notes": "Outline done; literature review in progress." },
+    { "title": "Mobile Money and Informal Savings Groups", "short_title": "Mobile money", "stage": "accepted", "started_on": "2024-11-01", "tags": ["ICT4D"],
+      "submissions": [ { "venue": "New Media & Society", "manuscript_id": "NMS-25-0901", "submitted_on": "2025-10-01", "status_on": "2026-10-28", "decision": "accept", "is_current": true, "decision_on": "2026-10-28" } ],
+      "preprint_server": "arXiv", "preprint_url": "https://example.org/preprint/123", "preprint_on": "2025-10-02" },
+    { "title": "An Abandoned Study of Smart Speakers", "stage": "shelved", "started_on": "2023-03-01" }
+  ],
+  "deadlines": [ { "title": "Grant report due", "due_on": "2026-11-28" }, { "title": "Reviewer report for a journal", "due_on": "2026-11-24" } ],
+  "publications": [
+    { "title": "Repair Work in Community Wi-Fi Networks", "authors": "A. Demo, S. Coauthor", "kind": "article", "venue": "Computer Supported Cooperative Work (CSCW)", "volume": "33", "issue": "2", "pages": "211–240", "year": 2024, "publisher": "Springer", "quartile": "Q1", "citations": 41, "doi": "10.0000/demo.1" },
+    { "title": "Low-Bandwidth Messaging for Health Workers", "authors": "A. Demo", "kind": "conference", "venue": "ACM CHI Conference", "year": 2023, "publisher": "ACM", "citations": 17 },
+    { "title": "A Short Note on Field Deployments", "authors": "A. Demo", "kind": "letter", "venue": "Interactions", "year": 2025, "citations": 2 }
+  ],
+  "opportunities": [
+    { "title": "Special issue: Care and Repair in Digital Infrastructures", "kind": "special_issue", "venue": "New Media & Society", "publisher": "SAGE", "deadline_on": "2027-01-31", "url": "https://example.org/cfp/care", "summary": "Calls for papers on maintenance, care and repair.", "why": "Matches your work on infrastructural care.", "fit": 5, "status": "new" },
+    { "title": "Workshop on Worker-Centred Platform Design", "kind": "workshop", "venue": "ACM CSCW 2027", "deadline_on": "2027-02-15", "url": "https://example.org/cfp/worker", "summary": "A one-day workshop on platform work.", "why": "Close to the gig work paper.", "fit": 4, "status": "new" },
+    { "title": "Digital Health Equity track", "kind": "conference", "venue": "Example Health Informatics Conference", "deadline_on": "2027-03-01", "url": "https://example.org/cfp/health", "fit": 3, "status": "saved" }
+  ],
+  "settings": {}
+}
