@@ -50,6 +50,10 @@ jobs:
 
       - run: npm ci
 
+      # The version without the leading "v", for the download links in the release notes.
+      - run: echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        shell: bash
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,11 +68,11 @@ jobs:
             The offline-first manuscript tracker. Your papers stay on your computer.
 
             Downloads:
-            - macOS (Apple silicon and Intel): the .dmg file
-            - Windows: the -setup.exe file (or the .msi)
-            - Linux: the .AppImage, .deb or .rpm file
+            - macOS (Apple silicon and Intel): [Manuscript.Tracker_${{ env.APP_VERSION }}_universal.dmg](https://github.com/naimbh/manuscript-tracker-desktop/releases/download/${{ github.ref_name }}/Manuscript.Tracker_${{ env.APP_VERSION }}_universal.dmg)
+            - Windows: [Manuscript.Tracker_${{ env.APP_VERSION }}_x64-setup.exe](https://github.com/naimbh/manuscript-tracker-desktop/releases/download/${{ github.ref_name }}/Manuscript.Tracker_${{ env.APP_VERSION }}_x64-setup.exe) (or the [.msi](https://github.com/naimbh/manuscript-tracker-desktop/releases/download/${{ github.ref_name }}/Manuscript.Tracker_${{ env.APP_VERSION }}_x64_en-US.msi))
+            - Linux: [.AppImage](https://github.com/naimbh/manuscript-tracker-desktop/releases/download/${{ github.ref_name }}/Manuscript.Tracker_${{ env.APP_VERSION }}_amd64.AppImage), [.deb](https://github.com/naimbh/manuscript-tracker-desktop/releases/download/${{ github.ref_name }}/Manuscript.Tracker_${{ env.APP_VERSION }}_amd64.deb) or [.rpm](https://github.com/naimbh/manuscript-tracker-desktop/releases/download/${{ github.ref_name }}/Manuscript.Tracker-${{ env.APP_VERSION }}-1.x86_64.rpm)
 
-            The installers are not signed yet, so your system will ask you to confirm the first launch. The README explains how.
+            The installers are not signed yet, so your system will ask you to confirm the first launch. The [README](https://github.com/naimbh/manuscript-tracker-desktop#download) explains how.
             Installed copies update themselves: the app checks for new versions and installs them when you restart.
           releaseDraft: true
           includeUpdaterJson: true
