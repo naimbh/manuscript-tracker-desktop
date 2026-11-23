@@ -58,9 +58,9 @@ The screenshots show fictional demo data.
 
 | System | Download |
 | --- | --- |
-| macOS 11 or later (Apple silicon and Intel) | [Manuscript.Tracker_1.0.0_universal.dmg](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.0_universal.dmg) |
-| Windows 10 or 11 | [Manuscript.Tracker_1.0.0_x64-setup.exe](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.0_x64-setup.exe) or [Manuscript.Tracker_1.0.0_x64_en-US.msi](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.0_x64_en-US.msi) |
-| Linux | [AppImage](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.0_amd64.AppImage), [.deb](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.0_amd64.deb) (Debian, Ubuntu) or [.rpm](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker-1.0.0-1.x86_64.rpm) (Fedora, openSUSE) |
+| macOS 11 or later (Apple silicon and Intel) | [Manuscript.Tracker_1.0.1_universal.dmg](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.1_universal.dmg) |
+| Windows 10 or 11 | [Manuscript.Tracker_1.0.1_x64-setup.exe](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.1_x64-setup.exe) or [Manuscript.Tracker_1.0.1_x64_en-US.msi](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.1_x64_en-US.msi) |
+| Linux | [AppImage](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.1_amd64.AppImage), [.deb](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker_1.0.1_amd64.deb) (Debian, Ubuntu) or [.rpm](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest/download/Manuscript.Tracker-1.0.1-1.x86_64.rpm) (Fedora, openSUSE) |
 
 All downloads: [Releases page](https://github.com/naimbh/manuscript-tracker-desktop/releases/latest)
 
@@ -70,7 +70,7 @@ The app is not signed with an Apple Developer or Windows code-signing certificat
 
 - **macOS:** open **System Settings → Privacy & Security**, scroll down to the message about Manuscript Tracker and click **Open Anyway**, then confirm. (Or right-click the app in Applications, choose **Open** and confirm.)
 - **Windows:** if SmartScreen says “Windows protected your PC”, click **More info**, then **Run anyway**.
-- **Linux:** make the AppImage executable (`chmod +x Manuscript.Tracker_1.0.0_amd64.AppImage`), or install the `.deb` or `.rpm` with your package manager.
+- **Linux:** make the AppImage executable (`chmod +x Manuscript.Tracker_1.0.1_amd64.AppImage`), or install the `.deb` or `.rpm` with your package manager.
 
 ## Move your data from the web app
 

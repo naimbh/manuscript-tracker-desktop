@@ -7,7 +7,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-    --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
     --color-zinc-50: #fafafa;
     --color-zinc-100: #f5f5f5;
@@ -64,7 +64,7 @@ select:focus[data-flux-control] {
 } */
 
 /* Manuscript Tracker */
-html { -webkit-font-smoothing: antialiased; font-feature-settings: "cv11", "ss01"; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; font-optical-sizing: auto; font-feature-settings: "cv11"; }
 /* Entrance animations play only inside [data-entering] (the route view for its first moments, or a panel that has just
    opened; see lib/motion.js), so data refreshes never replay them or blink rows that move. */
 :where([data-entering]) .page-in, .page-in:where([data-entering]) { animation: page-in .22s cubic-bezier(.2,.7,.2,1) both; }

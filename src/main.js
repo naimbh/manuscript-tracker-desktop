@@ -1,8 +1,6 @@
 import { createApp } from 'vue';
-import '@fontsource/inter/400.css';
-import '@fontsource/inter/500.css';
-import '@fontsource/inter/600.css';
-import '@fontsource/inter/700.css';
+// Inter variable font with the optical-size axis: small text uses the text cut, headings the display cut.
+import '@fontsource-variable/inter/opsz.css';
 import './css/app.css';
 import './css/desktop.css';
 
