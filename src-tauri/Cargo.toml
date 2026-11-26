@@ -1,6 +1,6 @@
 [package]
 name = "manuscript-tracker"
-version = "1.0.2"
+version = "1.0.3"
 description = "Manuscript Tracker desktop app"
 authors = ["Naim Bin Hasan"]
 license = "AGPL-3.0-or-later"

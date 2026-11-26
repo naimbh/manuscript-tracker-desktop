@@ -9,6 +9,7 @@ import { navigate } from '@/lib/router.js';
 import { user } from '@/lib/site.js';
 import { before, diffForHumans, format, now, plural } from '@/lib/format.js';
 import { useResource } from '@/lib/useResource.js';
+import { openUrl, utc } from '@/components/shell/links.js';
 
 const busy = ref(null);
 
@@ -56,6 +57,31 @@ const text = (a) => (a.revision_due_on ? `Revision due ${diffForHumans(a.revisio
 const left = (dl) => dl.days_left;
 const leftText = (n) => (n < 0 ? `${Math.abs(n)}d late` : n === 0 ? 'today' : `${n}d`);
 const ringTone = (c) => (c.overdue ? 'red' : c.pct > 75 ? 'amber' : 'indigo');
+
+// Review clocks with their submission portal (the submission's link, else its journal's or conference's).
+const clockCards = computed(() => {
+  const portals = Object.fromEntries((d.value?.portals ?? []).map((p) => [p.id, p]));
+  return (d.value?.clocks ?? []).map((c) => ({ ...c, portal: portals[c.id] ?? null }));
+});
+const portalCount = computed(() => clockCards.value.filter((c) => c.portal).length);
+const copied = ref(null);
+async function copyId(pt) {
+  try {
+    await navigator.clipboard.writeText(pt.manuscript_id);
+    copied.value = pt.id;
+    setTimeout(() => { if (copied.value === pt.id) copied.value = null; }, 1500);
+  } catch {}
+}
+async function openPortal(pt) {
+  openUrl(pt.portal_url);
+  try {
+    const r = await api('desk.portalChecked', { id: pt.id });
+    res.mutate((cur) => cur && { ...cur, portals: (cur.portals ?? []).map((x) => (x.id === pt.id ? { ...x, checked_at: r.checked_at } : x)) });
+  } catch {}
+}
+function openAllPortals() {
+  clockCards.value.filter((c) => c.portal).forEach((c, i) => setTimeout(() => openPortal(c.portal), i * 400));
+}
 
 async function submitNext(paperId) {
   if (busy.value) return;
@@ -183,25 +209,44 @@ onBeforeUnmount(() => offs.forEach((off) => off()));
                     </section>
                 </div>
 
-                <!-- Review clocks -->
+                <!-- Review clocks, with each submission's portal -->
                 <section v-if="d.clocks.length">
-                    <div class="mb-3 flex items-baseline justify-between gap-2">
+                    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                         <h2 class="font-semibold">Review clocks</h2>
-                        <span class="text-xs text-zinc-400">Days in review against each journal’s or conference’s usual decision time</span>
+                        <div class="flex items-baseline gap-3">
+                            <span class="text-xs text-zinc-400">Days in review against each venue’s usual decision time. Open a portal to check for news.</span>
+                            <button v-if="portalCount > 1" type="button" class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400" @click="openAllPortals">Open all {{ portalCount }} portals <FluxIcon name="arrow-up-right" variant="micro" class="size-3" /></button>
+                        </div>
                     </div>
                     <UiList :pin="false" class="stagger grid grid-cols-2 gap-3 xl:grid-cols-3">
-                        <a v-for="s in d.clocks" :key="s.id" :href="route('papers.index', s.paper_id)" class="panel lift flex items-center gap-4 p-4">
-                            <UiRing v-if="s.clock" :pct="s.clock.pct" :tone="ringTone(s.clock)" :label="String(s.days)" sub="days" />
-                            <UiRing v-else :pct="0" tone="zinc" :label="s.days === null || s.days === undefined ? '–' : String(s.days)" sub="days" />
-                            <div class="min-w-0">
-                                <div class="truncate text-sm font-semibold">{{ s.paper_title }}</div>
-                                <div class="truncate text-sm text-zinc-500">{{ s.venue_name }}</div>
-                                <div class="mt-1 text-xs" :class="s.clock && s.clock.overdue ? 'text-rose-500' : 'text-zinc-400'">
-                                    <template v-if="s.clock">{{ s.clock.overdue ? 'Past the usual ' + s.clock.typical + ' days' : 'Decision expected around ' + format(s.clock.expected_on, 'j M') }}</template>
-                                    <template v-else>Add the journal’s or conference’s decision time to start the clock</template>
+                        <div v-for="s in clockCards" :key="s.id" class="panel lift flex flex-col justify-between p-4">
+                            <a :href="route('papers.index', s.paper_id)" class="flex items-center gap-4">
+                                <UiRing v-if="s.clock" :pct="s.clock.pct" :tone="ringTone(s.clock)" :label="String(s.days)" sub="days" />
+                                <UiRing v-else :pct="0" tone="zinc" :label="s.days === null || s.days === undefined ? '–' : String(s.days)" sub="days" />
+                                <div class="min-w-0">
+                                    <div class="truncate text-sm font-semibold">{{ s.paper_title }}</div>
+                                    <div class="truncate text-sm text-zinc-500">{{ s.venue_name }}</div>
+                                    <div class="mt-1 text-xs" :class="s.clock && s.clock.overdue ? 'text-rose-500' : 'text-zinc-400'">
+                                        <template v-if="s.clock">{{ s.clock.overdue ? 'Past the usual ' + s.clock.typical + ' days' : 'Decision expected around ' + format(s.clock.expected_on, 'j M') }}</template>
+                                        <template v-else>Add the journal’s or conference’s decision time to start the clock</template>
+                                    </div>
                                 </div>
+                            </a>
+                            <div class="mt-3 flex items-center justify-between gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                                <template v-if="s.portal">
+                                    <div class="min-w-0 text-xs leading-tight">
+                                        <button v-if="s.portal.manuscript_id" type="button" class="max-w-full truncate font-mono text-zinc-600 hover:text-indigo-600 dark:text-zinc-300" title="Copy the manuscript ID" @click="copyId(s.portal)">{{ copied === s.portal.id ? 'Copied' : s.portal.manuscript_id }}</button>
+                                        <span v-else class="text-zinc-400">No manuscript ID</span>
+                                        <span class="block truncate text-zinc-400">{{ s.portal.checked_at ? 'Opened ' + diffForHumans(utc(s.portal.checked_at)) : 'Not opened from here yet' }}</span>
+                                    </div>
+                                    <FluxButton size="xs" icon-trailing="arrow-up-right" class="shrink-0" @click="openPortal(s.portal)">Open portal</FluxButton>
+                                </template>
+                                <template v-else>
+                                    <span class="text-xs text-zinc-400">No portal link</span>
+                                    <a :href="route('papers.index', s.paper_id)" class="text-xs font-medium text-zinc-500 hover:text-indigo-600">Add one</a>
+                                </template>
                             </div>
-                        </a>
+                        </div>
                     </UiList>
                 </section>
 

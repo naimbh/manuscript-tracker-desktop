@@ -62,6 +62,7 @@ These exist only in debug builds and are ignored by release builds.
 | --- | --- |
 | `MT_DATA_DIR=/some/folder` | Uses that folder for the database and files instead of the normal data folder, with its own web storage, no single-instance lock and no saved window state. The `--mcp` server honours it too. |
 | `MT_E2E=1` | With `MT_DATA_DIR`: backups are exported to `<MT_DATA_DIR>/exports` without a save dialog, and the WebDriver chooses the web view’s profile folder. Used by the end-to-end tests. |
+| `MT_E2E_CONFIRM=1` | With `MT_DATA_DIR` and `MT_E2E`: every confirmation dialog answers OK by itself, so flows behind one (deleting a paper, a file or a submission) can be tested. |
 | `MT_QA_EVAL=/path/file.js` | Whenever the file appears, the app runs its JavaScript in the window and deletes the file (`menu:<id>` triggers a menu command instead). Useful for scripted visual checks. With `MT_DATA_DIR`, the script can call the `qa.write` action (`{ text }`, appended to `<MT_DATA_DIR>/qa-out.txt`) to report what it found, and `qa.rect` to get the window's frame for a screenshot. |
 
 With `MT_DATA_DIR` set, `backup.import` also accepts `{ path }`, so a demo backup can be loaded without the file dialog.

@@ -172,17 +172,21 @@ async function deletePaper(id) {
   if (!ok) return;
   try {
     await api('papers.delete', { id });
+    // Take it off the list at once; the reload below confirms it.
+    res.mutate((cur) => cur && { ...cur, papers: (cur.papers ?? []).filter((x) => x.id !== id) });
     cache.details.delete(id);
     toast({ variant: 'success', text: 'Paper deleted.' });
+    // This list ignores its own 'papers-list' signal, so it reloads itself here; other pages reload on the signal.
     papersChanged('papers-list');
     if (selectedId.value === id) navigate('papers.index', paperLink(null));
-    else await load();
+    await load();
   } catch (e) { toast({ variant: 'danger', text: e.message }); }
 }
 
-function onDeleted() {
+async function onDeleted() {
   cache.details.delete(selectedId.value);
   navigate('papers.index', paperLink(null));
+  await load();
 }
 
 /* ---------- files dragged from Finder/Explorer ---------- */

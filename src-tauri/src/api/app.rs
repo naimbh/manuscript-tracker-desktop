@@ -248,6 +248,15 @@ fn confirm(args: &Value, ctx: &Ctx) -> Result<Value> {
         .rule("ok", "nullable|string|max:40")
         .rule("danger", "nullable|boolean")
         .validate()?;
+    // Debug builds run by the end-to-end tests (`MT_DATA_DIR` + `MT_E2E`): `MT_E2E_CONFIRM=1` answers every
+    // confirmation with OK, so flows behind one (such as deleting a paper) can be tested without a person.
+    if cfg!(debug_assertions)
+        && crate::mcp::data_dir_override().is_some()
+        && std::env::var_os("MT_E2E").is_some()
+        && std::env::var_os("MT_E2E_CONFIRM").is_some()
+    {
+        return Ok(json!(true));
+    }
     let app = ctx.app()?;
     let mut dialog = app
         .dialog()

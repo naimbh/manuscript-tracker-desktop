@@ -20,6 +20,7 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "desk.createPaper" => create_paper(args, ctx),
         "desk.search" => search(args, ctx),
         "desk.runScans" => run_scans(ctx),
+        "desk.portalChecked" => portal_checked(args, ctx),
         _ => return None,
     })
 }
@@ -39,7 +40,7 @@ fn load(ctx: &Ctx) -> Result<Loaded> {
     ctx.db.with(|c| {
         let papers = c.rows("SELECT id, title, short_title, stage, preprint_url FROM papers WHERE user_id = ?1 ORDER BY id", [USER_ID])?;
         let rows = c.rows(
-            "SELECT s.*, v.id AS v_id, v.review_type AS v_review_type, v.decision_days AS v_decision_days
+            "SELECT s.*, v.id AS v_id, v.review_type AS v_review_type, v.decision_days AS v_decision_days, v.portal_url AS v_portal_url
              FROM submissions s JOIN papers p ON p.id = s.paper_id LEFT JOIN venues v ON v.id = s.venue_id
              WHERE p.user_id = ?1 ORDER BY s.paper_id, s.submitted_on DESC, s.id DESC",
             [USER_ID],
@@ -246,6 +247,8 @@ fn data(ctx: &Ctx) -> Result<Value> {
         })
         .collect();
 
+    let portals = portals(&l, &titles, today, &checked_map(&ctx.db));
+
     let since = (today - chrono::Duration::days(7)).format(DATE_FORMAT).to_string();
     let deadlines: Vec<Value> = ctx
         .db
@@ -269,9 +272,78 @@ fn data(ctx: &Ctx) -> Result<Value> {
         ],
         "attention": attention,
         "clocks": clocks,
+        "portals": portals,
         "deadlines": deadlines,
         "journey": journey(&l, now),
     }))
+}
+
+// ---- Submission portals ---------------------------------------------------------------------------------
+//
+// One row per paper whose current submission has a portal link (the submission's own, else its journal's or
+// conference's), so the user can check each manuscript system quickly. Papers that are published or shelved are
+// left out. The time the user last opened a portal from the Desk is kept on this computer only.
+
+const PORTALS_CHECKED_KEY: &str = "desk.portals_checked";
+
+fn checked_map(db: &crate::db::Db) -> HashMap<String, String> {
+    crate::models::setting::get(db, PORTALS_CHECKED_KEY).and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
+}
+
+fn portals(l: &Loaded, titles: &HashMap<i64, String>, today: NaiveDate, checked: &HashMap<String, String>) -> Vec<Value> {
+    let empty = Vec::new();
+    let mut out: Vec<(bool, i64, Value)> = Vec::new();
+    for p in &l.papers {
+        if matches!(p["stage"].as_str(), Some("published" | "shelved")) {
+            continue;
+        }
+        let pid = p["id"].as_i64().unwrap_or(0);
+        let Some(s) = current(l.subs.get(&pid).unwrap_or(&empty)) else {
+            continue;
+        };
+        let url = [&s["portal_url"], &s["v_portal_url"]]
+            .into_iter()
+            .filter_map(|u| u.as_str().map(str::trim))
+            .find(|u| u.starts_with("http://") || u.starts_with("https://"));
+        let Some(url) = url else {
+            continue;
+        };
+        let decision = s["decision"].as_str().unwrap_or("submitted");
+        let open = submission::is_waiting(s) || matches!(decision, "major" | "minor" | "returned");
+        let days = submission::days_in_review(s, today);
+        let id = s["id"].as_i64().unwrap_or(0);
+        out.push((
+            open,
+            days.unwrap_or(-1),
+            json!({
+                "id": id, "paper_id": pid, "paper_title": titles.get(&pid).cloned().unwrap_or_default(),
+                "venue_name": s["venue_name"], "manuscript_id": s["manuscript_id"], "portal_url": url,
+                "decision": decision, "decision_label": submission::decision_label(decision), "days": days,
+                "status_on": s["status_on"], "checked_at": checked.get(&id.to_string()),
+            }),
+        ));
+    }
+    // Submissions still in play first, longest wait first.
+    out.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    out.into_iter().map(|(_, _, v)| v).collect()
+}
+
+/// `desk.portalChecked` `{ id }`: remember that the user opened this submission's portal now → `{ checked_at }`.
+fn portal_checked(args: &Value, ctx: &Ctx) -> Result<Value> {
+    let id = args.get("id").and_then(Value::as_i64).ok_or_else(|| crate::error::ApiError::field("id", "The id field is required."))?;
+    let mut map = checked_map(&ctx.db);
+    let now = crate::util::now_ts();
+    map.insert(id.to_string(), now.clone());
+    // Keep the map small: drop entries for submissions that no longer exist.
+    let ids: Vec<String> = ctx
+        .db
+        .rows("SELECT s.id FROM submissions s JOIN papers p ON p.id = s.paper_id WHERE p.user_id = ?1", [USER_ID])?
+        .iter()
+        .filter_map(|r| r["id"].as_i64().map(|i| i.to_string()))
+        .collect();
+    map.retain(|k, _| ids.contains(k));
+    crate::models::setting::put(&ctx.db, PORTALS_CHECKED_KEY, Some(&serde_json::to_string(&map).unwrap_or_default()))?;
+    Ok(json!({ "checked_at": now }))
 }
 
 /// Adds `paper` (display title or null) and `days_left` to a deadline row joined with its paper's titles.
