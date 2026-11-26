@@ -72,7 +72,8 @@ pub fn same_call(a_url: &str, a_title: &str, a_deadline: Option<&str>, b_url: &s
     }
 }
 
-/// The interests text (port of OpportunityScanner::interestsFor).
+/// The interests text (port of OpportunityScanner::interestsFor): the saved interests, else the keywords of the
+/// user's papers. Empty when there are neither; nothing field-specific is assumed.
 pub fn interests_for(ctx: &Ctx, saved: Option<&str>) -> String {
     if let Some(i) = saved.map(str::trim).filter(|i| !i.is_empty()) {
         return i.to_string();
@@ -82,21 +83,141 @@ pub fn interests_for(ctx: &Ctx, saved: Option<&str>) -> String {
     for r in rows {
         for k in r["keywords"].as_str().unwrap_or("").split([';', ',']) {
             let k = k.trim();
-            if !k.is_empty() && !kws.iter().any(|x| x == k) && kws.len() < 15 {
+            if !k.is_empty() && !kws.iter().any(|x| x.eq_ignore_ascii_case(k)) && kws.len() < 15 {
                 kws.push(k.to_string());
             }
         }
     }
-    if kws.is_empty() {
-        "information systems, HCI, CSCW, future of work".into()
-    } else {
-        kws.join(", ")
-    }
+    kws.join(", ")
 }
 
-/// Interest terms for WikiCFP (first six).
+/// Interests used by a scan (the first eight phrases), lower-case.
 pub fn terms(interests: &str) -> Vec<String> {
-    interests.split([';', ',']).map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).take(6).collect()
+    let mut out: Vec<String> = Vec::new();
+    for t in interests.split([';', ',', '\n']) {
+        let t = t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        if !t.is_empty() && !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    out.truncate(8);
+    out
+}
+
+/// Words that carry no topic on their own.
+const STOP: &[&str] = &[
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "the",
+    "for",
+    "in",
+    "on",
+    "with",
+    "to",
+    "by",
+    "at",
+    "from",
+    "via",
+    "using",
+    "based",
+    "study",
+    "studies",
+    "research",
+    "applied",
+    "advanced",
+    "new",
+    "modern",
+    "approach",
+    "approaches",
+    "method",
+    "methods",
+    "theory",
+    "issues",
+    "topics",
+];
+
+/// The topic words of an interest: lower-case, without stop words, at least three letters.
+pub fn topic_words(term: &str) -> Vec<String> {
+    term.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3 && !STOP.contains(w))
+        .map(str::to_string)
+        .collect()
+}
+
+/// WikiCFP lists calls under short topic categories ("chemistry", "polymer", "machine learning"), so a
+/// specific interest such as "polymer chemistry" has no category of its own. Each interest is looked up as
+/// written first; when that category is empty or small, its topic words are looked up too (the last word,
+/// usually the field, first). Returns `(category, interest)` pairs, at most `max`.
+pub fn feed_queries(terms: &[String], counts: &std::collections::HashMap<String, usize>, max: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for t in terms {
+        if counts.get(t).copied().unwrap_or(0) >= 8 {
+            continue;
+        }
+        let mut words = topic_words(t);
+        if words.len() < 2 && words.first().is_some_and(|w| w == t) {
+            continue;
+        }
+        words.reverse();
+        for w in words {
+            if out.len() >= max {
+                return out;
+            }
+            if !terms.contains(&w) && !out.iter().any(|(q, _)| q == &w) {
+                out.push((w, t.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Word stem for loose matching ("polymers" ~ "polymeric" ~ "polymer"): the first six letters.
+fn stem(w: &str) -> String {
+    w.chars().take(6).collect()
+}
+
+/// How much of one interest a text covers: 1.0 for the whole phrase or every topic word, else the share of
+/// topic words found (by stem).
+pub fn coverage(term: &str, text_lower: &str, text_stems: &std::collections::HashSet<String>) -> f64 {
+    if term.len() > 2 && text_lower.contains(term) {
+        return 1.0;
+    }
+    let words = topic_words(term);
+    if words.is_empty() {
+        return 0.0;
+    }
+    let hit = words.iter().filter(|w| text_stems.contains(&stem(w))).count();
+    hit as f64 / words.len() as f64
+}
+
+/// Keyword fit when no AI is set up: 1–5 from how well the call covers the interests. An interest counts
+/// fully when the call names it or all its topic words, and half when it names at least half of them.
+pub fn keyword_fit(interests: &[String], text: &str) -> (i64, Vec<String>) {
+    let t = text.to_lowercase();
+    let stems: std::collections::HashSet<String> =
+        t.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 3).map(stem).collect();
+    let mut full = Vec::new();
+    let mut part = Vec::new();
+    for i in interests {
+        let c = coverage(i, &t, &stems);
+        if c >= 0.999 {
+            full.push(i.clone());
+        } else if c >= 0.5 {
+            part.push(format!("{i} (in part)"));
+        }
+    }
+    let fit = match (full.len(), part.len()) {
+        (0, 0) => 1,
+        (0, _) => 3,
+        (1, 0) => 4,
+        _ => 5,
+    };
+    full.extend(part);
+    (fit, full)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -121,19 +242,6 @@ pub fn feed_candidates(xml: &str, term: &str) -> Vec<Candidate> {
             ..Default::default()
         })
         .collect()
-}
-
-/// Keyword fit when no AI is set up: 1–5 from how many interest terms the call mentions.
-pub fn keyword_fit(interests: &[String], text: &str) -> (i64, Vec<String>) {
-    let t = text.to_lowercase();
-    let hits: Vec<String> = interests.iter().filter(|i| i.len() > 2 && t.contains(i.as_str())).cloned().collect();
-    let fit = match hits.len() {
-        0 => 1,
-        1 => 3,
-        2 => 4,
-        _ => 5,
-    };
-    (fit, hits)
 }
 
 fn item_schema() -> Value {
@@ -237,26 +345,47 @@ pub fn save_found(ctx: &Ctx, scan_id: i64, f: &Found) -> Result<Option<i64>> {
 async fn gather(ctx: &Ctx, run: &Run, interests: &str) -> Result<Vec<Candidate>> {
     let terms = terms(interests);
     run.step(ctx, &format!("Reading WikiCFP feeds for {} {}", terms.len(), if terms.len() == 1 { "interest" } else { "interests" }));
-    let mut set = tokio::task::JoinSet::new();
-    for t in terms.clone() {
-        set.spawn(async move {
-            let url =
-                format!("http://www.wikicfp.com/cfp/rss?cat={}", url::form_urlencoded::byte_serialize(t.as_bytes()).collect::<String>());
-            (t.clone(), fetcher().get(&url, &Opts::FEED).await)
-        });
-    }
+    let feed = |cat: String, term: String| async move {
+        let url =
+            format!("http://www.wikicfp.com/cfp/rss?cat={}", url::form_urlencoded::byte_serialize(cat.as_bytes()).collect::<String>());
+        (cat, term, fetcher().get(&url, &Opts::FEED).await)
+    };
     let mut out: Vec<Candidate> = Vec::new();
-    while let Some(r) = run.guard(set.join_next()).await? {
-        match r {
-            Ok((t, Ok(p))) => {
-                for c in feed_candidates(&p.body, &t) {
-                    if !out.iter().any(|o| normalize_url(&o.link) == normalize_url(&c.link)) {
-                        out.push(c);
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    // First the interests as written, then (for interests with few calls) their topic words.
+    for pass in 0..2 {
+        let queries: Vec<(String, String)> = if pass == 0 {
+            terms.iter().map(|t| (t.clone(), t.clone())).collect()
+        } else {
+            let q = feed_queries(&terms, &counts, 16);
+            if !q.is_empty() {
+                run.note(
+                    ctx,
+                    &format!("Also reading broader topics: {}", q.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>().join(", ")),
+                );
+            }
+            q
+        };
+        let mut set = tokio::task::JoinSet::new();
+        for (cat, term) in queries {
+            set.spawn(feed(cat, term));
+        }
+        while let Some(r) = run.guard(set.join_next()).await? {
+            match r {
+                Ok((cat, term, Ok(p))) => {
+                    let found = feed_candidates(&p.body, &term);
+                    if pass == 0 {
+                        counts.insert(cat.clone(), found.len());
+                    }
+                    for c in found {
+                        if !out.iter().any(|o| normalize_url(&o.link) == normalize_url(&c.link)) {
+                            out.push(c);
+                        }
                     }
                 }
+                Ok((cat, _, Err(e))) => run.note(ctx, &format!("WikiCFP feed for “{cat}” failed: {e}")),
+                Err(_) => {}
             }
-            Ok((t, Err(e))) => run.note(ctx, &format!("WikiCFP feed for “{t}” failed: {e}")),
-            Err(_) => {}
         }
     }
     // Skip calls already stored before reading their pages.
@@ -266,6 +395,8 @@ async fn gather(ctx: &Ctx, run: &Run, interests: &str) -> Result<Vec<Candidate>>
     });
     // Events already over (from the feed's date range) are not worth a request.
     out.retain(|c| extract::dates_in(&c.description).last().is_none_or(|d| *d >= today()));
+    // The calls that match the interests best are read first (the list is capped).
+    out.sort_by_key(|c| -keyword_fit(&terms, &format!("{} {}", c.title, c.description)).0);
     out.truncate(40);
     Ok(out)
 }
@@ -383,6 +514,9 @@ pub async fn scan(ctx: Ctx, run: Run, scan_id: i64) {
 async fn scan_inner(ctx: &Ctx, run: &Run, scan_id: i64) -> Result<(usize, usize)> {
     let saved: Option<String> = ctx.db.scalar("SELECT interests FROM users WHERE id = ?1", [USER_ID])?;
     let interests = interests_for(ctx, saved.as_deref());
+    if terms(&interests).is_empty() {
+        return Err(ApiError::msg("Add your research interests first (Calls for Papers → Interests), so the scan knows what to look for."));
+    }
     let mut cands = gather(ctx, run, &interests).await?;
     ctx.db.update("scans", scan_id, &json!({ "candidates": cands.len() }))?;
     run.advance(ctx, None);
@@ -680,11 +814,28 @@ mod tests {
         let c = feed_candidates(xml, "hci");
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].term, "hci");
-        assert_eq!(terms("a, b; c,,d, e, f, g, h"), vec!["a", "b", "c", "d", "e", "f"]);
+        assert_eq!(terms("a, B; c,,d, e, f, g, h, i, a"), vec!["a", "b", "c", "d", "e", "f", "g", "h"]);
         let (fit, hits) = keyword_fit(&terms("platform labor, CSCW, ICT4D"), "CSCW workshop on platform labor");
-        assert_eq!((fit, hits.len()), (4, 2));
+        assert_eq!((fit, hits.len()), (5, 2));
+        // Specific interests match broader calls by their topic words, and plural or adjective forms count.
+        let chem = terms("polymer chemistry, organic synthesis, catalysis");
+        let (fit, hits) = keyword_fit(&chem, "International Conference on Chemistry and Polymers");
+        assert_eq!((fit, hits), (4, vec!["polymer chemistry".to_string()]));
+        assert_eq!(keyword_fit(&chem, "Conference on Green Chemistry"), (3, vec!["polymer chemistry (in part)".to_string()]));
+        assert_eq!(keyword_fit(&chem, "Workshop on Machine Learning").0, 1);
+        assert_eq!(topic_words("Studies of polymer chemistry"), vec!["polymer", "chemistry"]);
+        // Interests with an empty or small WikiCFP category are also looked up by their topic words, field first.
+        let counts: std::collections::HashMap<String, usize> =
+            [("polymer chemistry".to_string(), 0), ("organic synthesis".to_string(), 12), ("catalysis".to_string(), 3)]
+                .into_iter()
+                .collect();
+        let q = feed_queries(&chem, &counts, 16);
+        assert_eq!(
+            q,
+            vec![("chemistry".to_string(), "polymer chemistry".to_string()), ("polymer".to_string(), "polymer chemistry".to_string())]
+        );
         let ctx = Ctx::for_tests(crate::db::test_db());
-        assert_eq!(interests_for(&ctx, None), "information systems, HCI, CSCW, future of work");
+        assert_eq!(interests_for(&ctx, None), "");
         ctx.db.insert("papers", &json!({ "user_id": 1, "title": "P", "keywords": "gig work; CSCW, gig work" })).unwrap();
         assert_eq!(interests_for(&ctx, Some("  ")), "gig work, CSCW");
         assert_eq!(interests_for(&ctx, Some("mine")), "mine");

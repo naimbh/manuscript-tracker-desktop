@@ -182,7 +182,7 @@ onBeforeUnmount(() => { clearTimeout(partialTimer); offs.forEach((off) => off())
                     <h1 class="mt-1 text-2xl font-semibold tracking-tight">Calls that fit your work</h1>
                     <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Every day, the AI reads new calls from WikiCFP and the publishers’ call pages, keeps only those with proceedings or a journal behind them, and ranks them against your interests.</p>
                     <button type="button" class="mt-3 inline-flex max-w-full items-center gap-1.5 truncate rounded-full bg-white/70 px-3 py-1 text-xs text-zinc-600 ring-1 ring-zinc-200 select-none hover:ring-indigo-300 dark:bg-zinc-900/60 dark:text-zinc-300 dark:ring-zinc-700" @click="openInterests">
-                        <FluxIcon name="adjustments-horizontal" variant="micro" class="size-3.5 shrink-0" /> <span class="truncate">{{ d?.interests }}</span>
+                        <FluxIcon name="adjustments-horizontal" variant="micro" class="size-3.5 shrink-0" /> <span class="truncate">{{ d?.interests || 'Add your research interests' }}</span>
                     </button>
                 </div>
                 <div class="flex flex-col items-end gap-2 select-none">
@@ -316,8 +316,8 @@ onBeforeUnmount(() => { clearTimeout(partialTimer); offs.forEach((off) => off())
         <FluxModal name="interests" class="w-full max-w-lg">
             <form class="space-y-4" @submit.prevent="saveInterests">
                 <FluxHeading size="lg">Your interests</FluxHeading>
-                <FluxText>Separate topics with commas. The first six are also used to search WikiCFP.</FluxText>
-                <FluxTextarea v-model="interests" name="interests" rows="4" placeholder="platform labor, gig economy, ICT4D, generative AI and work, CSCW" />
+                <FluxText>Separate topics with commas; the first eight are used. Specific topics such as “polymer chemistry” also find calls listed under broader ones such as “chemistry”. Journal and conference suggestions use the same interests.</FluxText>
+                <FluxTextarea v-model="interests" name="interests" rows="4" placeholder="e.g. polymer chemistry, catalysis, green synthesis" />
                 <FluxError name="interests" />
                 <div class="flex justify-end gap-2">
                     <FluxModalClose><FluxButton variant="ghost">Cancel</FluxButton></FluxModalClose>

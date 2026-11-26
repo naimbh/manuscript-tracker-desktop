@@ -1,6 +1,6 @@
 //! `venues.*` handlers: port of resources/views/livewire/venues.blade.php (venue library).
 //!
-//! The research entry points (`venues.research`, `venues.refreshAll`, `venues.restoreCatalog`) live in
+//! The research entry points (`venues.research`, `venues.refreshAll`) live in
 //! `api/proposals.rs`, which `api::dispatch` consults first.
 
 use crate::api::Ctx;
@@ -19,14 +19,111 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "venues.save" => save(args, ctx),
         "venues.delete" => delete(args, ctx),
         "venues.toggleWatch" => toggle_watch(args, ctx),
+        "venues.suggest" => suggest(args, ctx),
+        "venues.addSuggested" => add_suggested(args, ctx),
         _ => return None,
     })
 }
 
-/// Called once by `app.onboard` after the local user is created (VenueCatalog::seedFor in the web app).
-pub fn on_user_created(ctx: &Ctx) -> Result<()> {
-    crate::research::venues::seed_catalog(ctx)?;
+/// Called once by `app.onboard` after the local user is created. Nothing is added: the library starts empty
+/// and fills from the user's own research interests (`venues.suggest`), not from a built-in list.
+pub fn on_user_created(_ctx: &Ctx) -> Result<()> {
     Ok(())
+}
+
+/// Lower-case name without a leading "The " and punctuation, to spot venues already in the library.
+fn name_key(name: &str) -> String {
+    let n = name.trim().to_lowercase();
+    let n = n.strip_prefix("the ").unwrap_or(&n).to_string();
+    n.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `venues.suggest` `{ interests? }` → `{ interests, terms, failed, items: [{ name, kind, publisher, website_url,
+/// field, why, score, in_library }] }`: journals and conferences that publish most on the user's interests
+/// (OpenAlex). Uses the saved interests unless others are given.
+fn suggest(args: &Value, ctx: &Ctx) -> Result<Value> {
+    let user = ctx.require_user()?;
+    let given = args.get("interests").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let interests = given.or_else(|| user["interests"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string));
+    let Some(interests) = interests else {
+        return Err(ApiError::field("interests", "Add your research interests first, for example “polymer chemistry, catalysis”."));
+    };
+    let terms = crate::research::venues::interest_terms(&interests);
+    if terms.is_empty() {
+        return Err(ApiError::field("interests", "Add at least one research interest."));
+    }
+    crate::research::fetch::init_cache(ctx);
+    let (list, failed) = ctx.block_on(crate::research::venues::suggest(&interests));
+    if list.is_empty() && failed.len() == terms.len() {
+        return Err(ApiError::msg("Could not reach OpenAlex. Check your internet connection and try again."));
+    }
+    let have: Vec<String> = ctx
+        .db
+        .rows("SELECT name FROM venues WHERE user_id = ?1", [USER_ID])?
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(name_key))
+        .collect();
+    let journals = list.iter().filter(|s| s.kind == "journal").take(25);
+    let conferences = list.iter().filter(|s| s.kind == "conference").take(10);
+    let items: Vec<Value> = journals
+        .chain(conferences)
+        .map(|s| {
+            let why = s
+                .hits
+                .iter()
+                .map(|(t, n)| format!("{n} {} on {t}", if *n == 1 { "paper" } else { "papers" }))
+                .collect::<Vec<_>>()
+                .join(", ");
+            json!({
+                "name": s.name, "kind": s.kind, "publisher": s.publisher, "website_url": s.website_url,
+                "field": s.hits.first().map(|h| h.0.clone()), "why": format!("{why} in the last three years"),
+                "score": (s.score * 100.0).round() / 100.0, "in_library": have.contains(&name_key(&s.name)),
+            })
+        })
+        .collect();
+    Ok(json!({ "interests": interests, "terms": terms, "failed": failed, "items": items }))
+}
+
+/// `venues.addSuggested` `{ items: [{ name, kind, publisher?, website_url?, field? }] }` → `{ added, skipped }`.
+/// Venues already in the library are skipped; new conferences are watched for deadlines.
+fn add_suggested(args: &Value, ctx: &Ctx) -> Result<Value> {
+    ctx.require_user()?;
+    let items = args.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+    if items.is_empty() {
+        return Err(ApiError::field("items", "Choose at least one journal or conference."));
+    }
+    let mut have: Vec<String> = ctx
+        .db
+        .rows("SELECT name FROM venues WHERE user_id = ?1", [USER_ID])?
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(name_key))
+        .collect();
+    let (mut added, mut skipped) = (0, 0);
+    ctx.db.tx(|tx| {
+        for it in items.iter().take(100) {
+            let name = it.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+            let kind = it.get("kind").and_then(Value::as_str).unwrap_or("journal");
+            if name.is_empty() || name.chars().count() > 255 || !matches!(kind, "journal" | "conference") || have.contains(&name_key(name))
+            {
+                skipped += 1;
+                continue;
+            }
+            let s = |k: &str, max: usize| {
+                it.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(|v| v.chars().take(max).collect::<String>())
+            };
+            let url = it.get("website_url").and_then(|u| crate::research::clean_url(u, 500));
+            tx.insert(
+                "venues",
+                &json!({ "user_id": USER_ID, "name": name, "kind": kind, "publisher": s("publisher", 255), "field": s("field", 255),
+                         "website_url": url, "watch": kind == "conference" }),
+            )?;
+            have.push(name_key(name));
+            added += 1;
+        }
+        Ok(())
+    })?;
+    ctx.changed("venues");
+    Ok(json!({ "added": added, "skipped": skipped }))
 }
 
 /// Scheduled jobs (`venues:refresh`) are registered by `research::register_jobs`.
@@ -282,22 +379,23 @@ mod tests {
     }
 
     #[test]
-    fn catalog_seeding() {
+    fn fresh_library_is_empty_and_suggestions_are_added_once() {
         let ctx = Ctx::for_tests(crate::db::test_db());
-        ctx.db.insert("venues", &json!({ "user_id": 1, "name": "iconference", "kind": "conference" })).unwrap();
         on_user_created(&ctx).unwrap();
-        let total = ctx.db.count("SELECT COUNT(*) FROM venues", []).unwrap();
-        assert!(total > 40);
-        assert_eq!(ctx.db.count("SELECT COUNT(*) FROM venues WHERE lower(name) = 'iconference'", []).unwrap(), 1);
-        assert!(ctx.db.count("SELECT COUNT(*) FROM venues WHERE kind = 'journal' AND watch = 0", []).unwrap() > 20);
-        assert_eq!(ctx.db.count("SELECT COUNT(*) FROM venues WHERE kind = 'conference' AND watch = 0", []).unwrap(), 1);
-        let chi = ctx.db.first("SELECT * FROM venues WHERE name LIKE 'CHI %'", []).unwrap().unwrap();
-        assert_eq!(chi["deadline_on"], "2027-01-21");
-        assert!(chi["checked_at"].is_null());
-        // Seeding again adds nothing.
-        on_user_created(&ctx).unwrap();
-        assert_eq!(ctx.db.count("SELECT COUNT(*) FROM venues", []).unwrap(), total);
-        let r = dispatch("venues.restoreCatalog", &json!({}), &ctx).unwrap();
-        assert_eq!(r["added"], 0);
+        assert_eq!(ctx.db.count("SELECT COUNT(*) FROM venues", []).unwrap(), 0);
+        ctx.db.insert("venues", &json!({ "user_id": 1, "name": "The Polymer Journal", "kind": "journal" })).unwrap();
+        let items = json!({ "items": [
+            { "name": "Polymer Journal", "kind": "journal" },
+            { "name": "ACS Catalysis", "kind": "journal", "publisher": "ACS", "field": "catalysis", "website_url": "https://pubs.acs.org/journal/accacs" },
+            { "name": "Catalysis Conference", "kind": "conference" },
+            { "name": "", "kind": "journal" },
+        ] });
+        let r = dispatch("venues.addSuggested", &items, &ctx).unwrap();
+        assert_eq!((r["added"].as_i64(), r["skipped"].as_i64()), (Some(2), Some(2)));
+        assert_eq!(dispatch("venues.addSuggested", &items, &ctx).unwrap()["added"], 0);
+        let conf = ctx.db.first("SELECT * FROM venues WHERE name = 'Catalysis Conference'", []).unwrap().unwrap();
+        assert_eq!(conf["watch"], true);
+        assert!(dispatch("venues.addSuggested", &json!({}), &ctx).is_err());
+        assert_eq!(name_key("The  Journal of Polymer Science!"), "journal of polymer science");
     }
 }

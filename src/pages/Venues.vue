@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { api } from '@/lib/api.js';
+import { api, submit } from '@/lib/api.js';
+import { provideErrors } from '@/flux/errors.js';
+import { modal } from '@/lib/modal.js';
 import { on } from '@/lib/events.js';
 import { bus } from '@/lib/bus.js';
 import { toast } from '@/lib/toast.js';
@@ -160,13 +162,70 @@ async function toggleWatch(v) {
   }
 }
 
-async function restoreCatalog() {
+// ---- Research interests and suggestions (nothing is built in: the library fills from the user's own field) ----
+const interests = ref('');
+const interestsDraft = ref('');
+const formErrors = ref({});
+provideErrors(formErrors);
+const sugg = ref(null);
+const suggLoading = ref(false);
+const suggError = ref('');
+const picked = ref({});
+const adding = ref(false);
+const suggJournals = computed(() => (sugg.value?.items ?? []).map((it, i) => ({ ...it, i })).filter((it) => it.kind === 'journal'));
+const suggConferences = computed(() => (sugg.value?.items ?? []).map((it, i) => ({ ...it, i })).filter((it) => it.kind === 'conference'));
+const pickedCount = computed(() => (sugg.value?.items ?? []).filter((it, i) => picked.value[i] && !it.in_library).length);
+
+async function loadInterests() {
+  try { interests.value = (await api('research.profile'))?.interests ?? ''; } catch {}
+}
+function openInterests() {
+  interestsDraft.value = interests.value;
+  formErrors.value = {};
+  modal('venue-interests').show();
+}
+async function saveInterests() {
+  const r = await submit(formErrors, () => api('opportunities.saveInterests', { interests: interestsDraft.value }));
+  if (!r) return;
+  interests.value = r.interests;
+  modal('venue-interests').close();
+  toast({ variant: 'success', text: 'Interests saved. Calls for papers use them too.' });
+  suggest();
+}
+async function suggest() {
+  if (!interests.value.trim()) { openInterests(); return; }
+  sugg.value = null;
+  suggError.value = '';
+  suggLoading.value = true;
+  modal('venue-suggest').show();
   try {
-    const { added: n } = await api('venues.restoreCatalog');
-    toast({ variant: 'success', text: n ? `Added ${n} journals and conferences from the starter list.` : 'You already have everything in the starter list.' });
+    const r = await api('venues.suggest');
+    sugg.value = r;
+    // Tick the ten best that are not in the library yet.
+    let n = 0;
+    picked.value = Object.fromEntries(r.items.map((it, i) => [i, !it.in_library && n++ < 10]));
+  } catch (e) {
+    suggError.value = e.message;
+  } finally {
+    suggLoading.value = false;
+  }
+}
+async function addPicked() {
+  const items = (sugg.value?.items ?? []).filter((it, i) => picked.value[i] && !it.in_library)
+    .map(({ name, kind, publisher, website_url, field }) => ({ name, kind, publisher, website_url, field }));
+  if (!items.length) return;
+  adding.value = true;
+  try {
+    const r = await api('venues.addSuggested', { items });
+    modal('venue-suggest').close();
+    toast({ variant: 'success', text: r.added ? `Added ${r.added} ${r.added === 1 ? 'journal or conference' : 'journals and conferences'}. Use “Update” to fill in their details.` : 'They are already in your library.' });
+    if (items.every((it) => it.kind === 'journal')) setTab('journal');
+    bus.emit('venues-changed');
     await load();
   } catch (e) {
     toast({ variant: 'danger', text: e.message });
+  } finally {
+    adding.value = false;
   }
 }
 
@@ -206,6 +265,7 @@ const chip = (on) => (on ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-
 const offs = [];
 onMounted(() => {
   load();
+  loadInterests();
   offs.push(on('changed', ({ area } = {}) => { if (['venues', 'proposals', 'backup', 'papers', 'external'].includes(area)) load(); }));
   offs.push(bus.on('papers-changed', load));
 });
@@ -222,6 +282,13 @@ onBeforeUnmount(() => { clearTimeout(qTimer); offs.forEach((off) => off()); });
                     <p class="eyebrow">Journals &amp; Conferences</p>
                     <h1 class="mt-1 text-2xl font-semibold tracking-tight">Where your papers can go</h1>
                     <p class="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">Conferences that publish proceedings, and journals with their speed and acceptance rate. Keep them current with one click.</p>
+                    <div class="mt-3 flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 select-none">
+                        <span class="text-xs text-zinc-500 dark:text-zinc-400">Suggestions are based on your interests:</span>
+                        <button type="button" class="inline-flex max-w-full items-center gap-1.5 truncate rounded-full bg-white/70 px-3 py-1 text-xs text-zinc-600 ring-1 ring-zinc-200 hover:ring-indigo-300 dark:bg-zinc-900/60 dark:text-zinc-300 dark:ring-zinc-700" title="Edit your research interests. Journal suggestions and the calls for papers scan both use them." @click="openInterests">
+                            <FluxIcon name="adjustments-horizontal" variant="micro" class="size-3.5 shrink-0" /> <span class="truncate">{{ interests || 'Add your research interests' }}</span>
+                        </button>
+                    </div>
+                    <p class="mt-1 text-[11px] text-zinc-400">Journal and conference suggestions come from OpenAlex, the open database of published research. Their details come from the AI update, with a source for each value.</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2 select-none">
                     <FluxTooltip :content="aiStatus">
@@ -229,6 +296,7 @@ onBeforeUnmount(() => { clearTimeout(qTimer); offs.forEach((off) => off()); });
                             <FluxIcon name="sparkles" variant="micro" /> {{ aiReady ? 'AI updates on' : 'AI updates off' }}
                         </span>
                     </FluxTooltip>
+                    <FluxButton icon="light-bulb" @click="suggest">Suggest from my interests</FluxButton>
                     <FluxButton icon="plus" @click="add">Add journal or conference</FluxButton>
                     <FluxButton v-if="!batch" variant="primary" icon="sparkles" :disabled="!list.length" @click="all">Update {{ tab === 'journal' ? 'journals' : 'conferences' }}</FluxButton>
                     <FluxButton v-else variant="danger" icon="stop" @click="stop">Stop</FluxButton>
@@ -286,8 +354,8 @@ onBeforeUnmount(() => { clearTimeout(qTimer); offs.forEach((off) => off()); });
         <div v-if="!loaded" class="grid grid-cols-2 gap-3 2xl:grid-cols-3" aria-hidden="true"><div v-for="i in 4" :key="i" class="panel h-40 animate-pulse bg-zinc-100/60 dark:bg-zinc-800/40"></div></div>
         <div v-else ref="listEl" class="scroll-mt-4 space-y-4">
             <div v-if="!list.length" class="panel">
-                <UiEmpty art="venue" title="No journals or conferences here" text="Add one yourself, or bring back the starter list of IS, iSchool and HCI journals and conferences.">
-                    <div class="flex gap-2"><FluxButton icon="plus" @click="add">Add journal or conference</FluxButton><FluxButton variant="ghost" @click="restoreCatalog">Restore starter list</FluxButton></div>
+                <UiEmpty art="venue" :title="venues.length ? 'Nothing matches here' : 'No journals or conferences yet'" :text="venues.length ? 'Try another search or field, or get more suggestions from your research interests.' : 'Get suggestions from your research interests: the journals and conference proceedings that publish most on your topics. Or add one yourself.'">
+                    <div class="flex gap-2"><FluxButton variant="primary" icon="light-bulb" @click="suggest">Suggest from my interests</FluxButton><FluxButton icon="plus" @click="add">Add journal or conference</FluxButton></div>
                 </UiEmpty>
             </div>
 
@@ -389,11 +457,60 @@ onBeforeUnmount(() => { clearTimeout(qTimer); offs.forEach((off) => off()); });
                 </div>
                 <div class="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 px-4 py-2.5 text-[11px] text-zinc-400 select-none dark:border-zinc-800">
                     <span>Run an AI update to fill gaps from the publisher’s pages.</span>
-                    <button type="button" class="hover:text-indigo-600" @click="restoreCatalog">Restore starter list</button>
+                    <button type="button" class="hover:text-indigo-600" @click="suggest">Suggest more from my interests</button>
                 </div>
             </div>
             <FluxPagination :pager="pager" label="Journals and conferences" />
         </div>
+
+        <FluxModal name="venue-interests" class="w-full max-w-lg">
+            <form class="space-y-4" @submit.prevent="saveInterests">
+                <FluxHeading size="lg">Your research interests</FluxHeading>
+                <FluxText>Separate topics with commas. Journal and conference suggestions and the calls for papers scan both use them. Specific topics work best, for example the ones you would put in a paper’s keywords.</FluxText>
+                <FluxTextarea v-model="interestsDraft" name="interests" rows="4" placeholder="e.g. polymer chemistry, catalysis, green synthesis" />
+                <FluxError name="interests" />
+                <div class="flex justify-end gap-2">
+                    <FluxModalClose><FluxButton variant="ghost">Cancel</FluxButton></FluxModalClose>
+                    <FluxButton type="submit" variant="primary">Save and suggest</FluxButton>
+                </div>
+            </form>
+        </FluxModal>
+
+        <FluxModal name="venue-suggest" class="w-full max-w-2xl">
+            <div class="space-y-4">
+                <div>
+                    <FluxHeading size="lg">Suggested from your interests</FluxHeading>
+                    <FluxText class="mt-1">Journals and conference proceedings that published the most on <span class="font-medium text-zinc-700 dark:text-zinc-200">{{ sugg?.terms?.join(', ') || interests }}</span> in the last three years, from OpenAlex. Focused venues rank above large general ones.</FluxText>
+                </div>
+                <div v-if="suggLoading" class="flex items-center gap-2 py-10 text-sm text-zinc-500"><FluxIcon name="arrow-path" variant="micro" class="size-4 animate-spin" /> Looking up journals and conferences…</div>
+                <FluxCallout v-else-if="suggError" variant="danger" icon="exclamation-triangle" :text="suggError" />
+                <template v-else-if="sugg">
+                    <FluxCallout v-if="sugg.failed?.length" variant="warning" icon="exclamation-triangle" :text="`Could not look up: ${sugg.failed.join(', ')}.`" />
+                    <p v-if="!sugg.items.length" class="py-6 text-sm text-zinc-500">Nothing found. Try broader or differently worded interests.</p>
+                    <div v-else class="max-h-[55vh] space-y-4 overflow-y-auto pr-1">
+                        <div v-for="group in [{ label: 'Journals', list: suggJournals }, { label: 'Conferences', list: suggConferences }]" :key="group.label" v-show="group.list.length">
+                            <p class="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</p>
+                            <div class="divide-y divide-zinc-100 rounded-xl border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-700">
+                                <label v-for="it in group.list" :key="it.i" class="flex cursor-pointer items-start gap-3 px-3 py-2.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/40" :class="it.in_library && 'cursor-default opacity-60'">
+                                    <input v-model="picked[it.i]" type="checkbox" class="mt-0.5 size-4 accent-indigo-600" :disabled="it.in_library" />
+                                    <span class="min-w-0 flex-1">
+                                        <span class="font-medium text-zinc-800 dark:text-zinc-100">{{ it.name }}</span><span v-if="it.in_library" class="ml-1.5 text-xs text-emerald-600">in your library</span>
+                                        <span class="block text-xs text-zinc-500">{{ [it.publisher, it.why].filter(Boolean).join(' · ') }}</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <button type="button" class="text-sm text-zinc-500 hover:text-indigo-600" @click="modal('venue-suggest').close(); openInterests()">Change interests</button>
+                    <div class="flex gap-2">
+                        <FluxModalClose><FluxButton variant="ghost">Close</FluxButton></FluxModalClose>
+                        <FluxButton variant="primary" icon="plus" :loading="adding" :disabled="!pickedCount || adding" @click="addPicked">Add {{ pickedCount || '' }} to library</FluxButton>
+                    </div>
+                </div>
+            </div>
+        </FluxModal>
 
         <VenueForm ref="form" @saved="saved" @deleted="() => { bus.emit('venues-changed'); load(); }" />
         <ReviewPanel ref="review" name="review-venues" :kinds="['venue']" @changed="load" />

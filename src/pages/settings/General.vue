@@ -26,6 +26,15 @@ async function setDesktop(key, value) {
     }
 }
 
+async function restoreNotices() {
+    try {
+        const r = await api('app.restoreNotices');
+        toast({ variant: 'success', text: r.restored ? `${r.restored} dismissed ${r.restored === 1 ? 'warning is' : 'warnings are'} shown again.` : 'No warnings were dismissed.' });
+    } catch (e) {
+        toast({ variant: 'danger', text: e.message });
+    }
+}
+
 let offs = [];
 onMounted(() => {
     load();
@@ -60,6 +69,11 @@ onBeforeUnmount(() => offs.forEach((f) => f?.()));
                 <FluxSwitch :model-value="desktop.always_on_top" label="Always on top" :description="`Keeps the window above other windows. Also in the Window menu and the menu bar icon (${kbd('mod+shift+t')}).`" @update:model-value="(v) => setDesktop('always_on_top', v)" />
                 <FluxSwitch :model-value="desktop.show_badge" label="Show badge" description="A count on the app icon of things that need your attention." @update:model-value="(v) => setDesktop('show_badge', v)" />
                 <FluxSwitch :model-value="desktop.auto_update" label="Check for updates automatically" description="Looks for a new version when the app starts and once a day, and offers to install it. Nothing is installed without your click." @update:model-value="(v) => setDesktop('auto_update', v)" />
+                <div class="space-y-2 pt-2">
+                    <FluxHeading>Dismissed warnings</FluxHeading>
+                    <FluxText>Warnings you closed, such as an anonymity risk, stay closed for that submission. Bring them all back here.</FluxText>
+                    <FluxButton size="sm" icon="arrow-path" @click="restoreNotices">Show dismissed warnings again</FluxButton>
+                </div>
             </div>
         </SettingsLayout>
     </section>

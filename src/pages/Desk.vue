@@ -20,6 +20,14 @@ const res = useResource('desk', () => api('desk.data'), {
 });
 const d = res.data;
 const load = res.refresh;
+async function dismiss(a) {
+  try {
+    await api('app.dismissNotice', { key: a.key });
+    await load();
+  } catch (e) {
+    toast({ variant: 'danger', text: e.message });
+  }
+}
 
 const today = now();
 const greeting = computed(() => (today.getHours() < 12 ? 'morning' : today.getHours() < 18 ? 'afternoon' : 'evening'));
@@ -143,6 +151,7 @@ onBeforeUnmount(() => offs.forEach((off) => off()));
                                     <p class="text-sm break-words text-zinc-500">{{ text(a) }}</p>
                                 </div>
                                 <FluxButton v-if="a.next" size="sm" variant="primary" icon-trailing="arrow-right" :loading="busy === a.paper.id" @click="submitNext(a.paper.id)">Submit</FluxButton>
+                                <FluxButton v-if="a.key" size="sm" variant="subtle" icon="x-mark" aria-label="Dismiss this warning" title="Dismiss (you can bring it back in Settings → General)" @click="dismiss(a)" />
                             </div>
                         </div>
                         </UiList>

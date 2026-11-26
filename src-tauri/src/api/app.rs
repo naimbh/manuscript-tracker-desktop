@@ -38,6 +38,8 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "app.confirm" => confirm(args, ctx),
         "app.checkUpdate" => crate::updater::check_update(ctx),
         "app.installUpdate" => crate::updater::install_update(ctx),
+        "app.dismissNotice" => dismiss_notice(args, ctx),
+        "app.restoreNotices" => restore_notices(ctx),
         // Debug builds only: visual QA prints page diagnostics (console errors) to the terminal.
         #[cfg(debug_assertions)]
         "app.qaLog" => {
@@ -73,6 +75,24 @@ fn ready(ctx: &Ctx) -> Result<Value> {
         }
     }
     Ok(json!(true))
+}
+
+/// `app.dismissNotice` `{ key }`: a warning the user closed stays closed (e.g. `anon:12`).
+fn dismiss_notice(args: &Value, ctx: &Ctx) -> Result<Value> {
+    let v = Validator::new(args).rule("key", "required|string|max:100").validate()?;
+    setting::dismiss(&ctx.db, &v.string("key"))?;
+    ctx.changed("desk");
+    ctx.changed("papers");
+    Ok(json!(true))
+}
+
+/// `app.restoreNotices`: show every dismissed warning again; returns how many there were.
+fn restore_notices(ctx: &Ctx) -> Result<Value> {
+    let n = setting::dismissed(&ctx.db).len();
+    setting::put(&ctx.db, setting::DISMISSED_KEY, None)?;
+    ctx.changed("desk");
+    ctx.changed("papers");
+    Ok(json!({ "restored": n }))
 }
 
 fn onboard(args: &Value, ctx: &Ctx) -> Result<Value> {

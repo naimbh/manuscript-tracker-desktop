@@ -31,6 +31,8 @@ struct Loaded {
     subs: HashMap<i64, Vec<Value>>,
     /// Name of the first venue in each paper's queue.
     next_venue: HashMap<i64, String>,
+    /// Keys of the warnings the user dismissed (`anon:<submission id>`).
+    dismissed: Vec<String>,
 }
 
 fn load(ctx: &Ctx) -> Result<Loaded> {
@@ -57,7 +59,8 @@ fn load(ctx: &Ctx) -> Result<Loaded> {
             let pid = q["paper_id"].as_i64().unwrap_or(0);
             next_venue.entry(pid).or_insert_with(|| q["name"].as_str().unwrap_or("").to_string());
         }
-        Ok(Loaded { papers, subs, next_venue })
+        let dismissed = crate::models::setting::dismissed_in(c);
+        Ok(Loaded { papers, subs, next_venue, dismissed })
     })
 }
 
@@ -93,10 +96,13 @@ fn attention(l: &Loaded, today: NaiveDate) -> Vec<Value> {
         let cur = current(subs);
         let cur_venue = cur.and_then(venue_of);
         if let Some(s) = paper::anonymity_risk(p, cur, cur_venue.as_ref()) {
-            out.push_back(json!({
-                "tone": "red", "icon": "eye", "paper": paper_ref(p),
-                "text": format!("Public preprint while under double-anonymous review at {}.", s["venue_name"].as_str().unwrap_or("")),
-            }));
+            let key = format!("anon:{}", s["id"]);
+            if !l.dismissed.contains(&key) {
+                out.push_back(json!({
+                    "tone": "red", "icon": "eye", "paper": paper_ref(p), "key": key,
+                    "text": format!("Public preprint while under double-anonymous review at {}.", s["venue_name"].as_str().unwrap_or("")),
+                }));
+            }
         }
         if let Some(s) = cur {
             let typical = s["v_decision_days"].as_i64();

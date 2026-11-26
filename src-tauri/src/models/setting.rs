@@ -263,3 +263,40 @@ mod tests {
         assert!(get(&db, "openai.key").is_none());
     }
 }
+
+// ---- Dismissed notices ---------------------------------------------------------------------------------------
+//
+// Warnings the user closed (for example the anonymity risk of one submission) stay closed. Keys look like
+// `anon:<submission id>`, so the same warning comes back for a new submission. Kept on this computer only
+// (not in backups).
+
+pub const DISMISSED_KEY: &str = "notices.dismissed";
+
+fn parse_dismissed(v: Option<String>) -> Vec<String> {
+    v.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default()
+}
+
+/// Keys of the notices the user dismissed.
+pub fn dismissed(db: &Db) -> Vec<String> {
+    parse_dismissed(get(db, DISMISSED_KEY))
+}
+
+/// The same, read with an open connection (inside `Db::with`).
+pub fn dismissed_in(c: &rusqlite::Connection) -> Vec<String> {
+    let v: Option<String> = c
+        .prepare_cached("SELECT value FROM settings WHERE key = ?1")
+        .and_then(|mut st| st.query_row([DISMISSED_KEY], |r| r.get::<_, Option<String>>(0)))
+        .ok()
+        .flatten();
+    parse_dismissed(v)
+}
+
+/// Remember that a notice was dismissed (at most 500 keys, newest kept).
+pub fn dismiss(db: &Db, key: &str) -> Result<()> {
+    let mut list = dismissed(db);
+    if !list.iter().any(|k| k == key) {
+        list.push(key.to_string());
+    }
+    let start = list.len().saturating_sub(500);
+    put(db, DISMISSED_KEY, Some(&serde_json::to_string(&list[start..]).unwrap_or_else(|_| "[]".into())))
+}

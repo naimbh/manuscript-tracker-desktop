@@ -27,7 +27,7 @@
 use crate::api::Ctx;
 use crate::db::{Query, USER_ID};
 use crate::error::{ApiError, Result};
-use crate::models::{author, deadline, keys, label, paper, submission};
+use crate::models::{author, deadline, keys, label, paper, setting, submission};
 use crate::util::{parse_date, today, today_str};
 use crate::validation::{as_integer, ensure, validate, Validator};
 use rusqlite::Connection;
@@ -258,8 +258,11 @@ pub fn detail(ctx: &Ctx, id: i64) -> Result<Value> {
         let current_id = current.as_ref().and_then(|c| i(c, "id"));
         let risk = current.as_ref().and_then(|cur| {
             let venue = cur.get("venue_review_type").filter(|v| !v.is_null()).map(|rt| json!({ "review_type": rt }));
-            paper::anonymity_risk(&paper, Some(cur), venue.as_ref()).map(|r| json!({ "id": r["id"], "venue_name": r["venue_name"] }))
+            paper::anonymity_risk(&paper, Some(cur), venue.as_ref())
+                .map(|r| json!({ "id": r["id"], "venue_name": r["venue_name"], "key": format!("anon:{}", r["id"]) }))
         });
+        // Dismissed by the user for this submission.
+        let risk = risk.filter(|r| !setting::dismissed_in(c).iter().any(|k| r["key"].as_str() == Some(k.as_str())));
         let needs_next = paper::needs_next_venue(&paper, current.as_ref());
         for sub in subs.iter_mut() {
             let sid = i(sub, "id").unwrap_or(0);

@@ -228,10 +228,37 @@ pub fn dispatch(name: &str, args: &Value, ctx: &Ctx) -> Result<Value> {
     if !args.is_object() {
         return Err(ApiError::msg("Invalid arguments."));
     }
-    // Research entry points (`proposals.*`, `venues.research`, `venues.refreshAll`, `venues.restoreCatalog`,
+    // Research entry points (`proposals.*`, `venues.research`, `venues.refreshAll`,
     // `publications.refreshCitations`, `publications.refreshAll`) are claimed before the area modules.
     if let Some(out) = proposals::handle(name, args, ctx) {
         return out;
+    }
+    // Debug builds with `MT_DATA_DIR` only: scripted QA (`MT_QA_EVAL`) writes its findings to
+    // `<MT_DATA_DIR>/qa-out.txt`, since the page cannot write files itself.
+    #[cfg(debug_assertions)]
+    if name == "qa.write" {
+        let Some(dir) = std::env::var_os("MT_DATA_DIR").filter(|v| !v.is_empty()) else {
+            return Err(ApiError::msg("Unknown action: qa.write"));
+        };
+        let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(std::path::Path::new(&dir).join("qa-out.txt"))
+            .map_err(|e| ApiError::msg(e.to_string()))?;
+        writeln!(f, "{text}").map_err(|e| ApiError::msg(e.to_string()))?;
+        return Ok(Value::Null);
+    }
+    // The main window's frame in screen points, for scripted screenshots (debug builds only).
+    #[cfg(debug_assertions)]
+    if name == "qa.rect" {
+        let w = ctx.app()?.get_webview_window("main").ok_or_else(|| ApiError::msg("No main window."))?;
+        let s = w.scale_factor().unwrap_or(1.0);
+        let p = w.outer_position().map_err(|e| ApiError::msg(e.to_string()))?;
+        let z = w.outer_size().map_err(|e| ApiError::msg(e.to_string()))?;
+        let f = |v: f64| (v / s).round() as i64;
+        return Ok(json!([f(p.x as f64), f(p.y as f64), f(z.width as f64), f(z.height as f64)]));
     }
     let area = name.split('.').next().unwrap_or("");
     let out = match area {

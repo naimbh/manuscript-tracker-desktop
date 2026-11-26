@@ -1,5 +1,5 @@
 //! `proposals.*` handlers (review what research found) and the research entry points for venues and
-//! publications: `venues.research`, `venues.refreshAll`, `venues.restoreCatalog`, `publications.refreshCitations`,
+//! publications: `venues.research`, `venues.refreshAll`, `publications.refreshCitations`,
 //! `publications.refreshAll`. `api::dispatch` routes these names here before the area modules, so
 //! `venues.rs` and `publications.rs` do not define them. See docs/ARCHITECTURE.md ("Research engine").
 
@@ -17,7 +17,6 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "proposals.dismiss" => dismiss(args, ctx),
         "venues.research" => venue_research(args, ctx),
         "venues.refreshAll" => venues_refresh_all(args, ctx),
-        "venues.restoreCatalog" => restore_catalog(ctx),
         "publications.refreshCitations" => publication_refresh(args, ctx),
         "publications.refreshAll" => publications_refresh_all(args, ctx),
         _ => return None,
@@ -136,13 +135,6 @@ fn venues_refresh_all(args: &Value, ctx: &Ctx) -> Result<Value> {
     Ok(json!({ "run": rid, "total": total }))
 }
 
-/// "Restore starter list" → `{ added }` (VenueCatalog::seedFor).
-fn restore_catalog(ctx: &Ctx) -> Result<Value> {
-    let n = venues::seed_catalog(ctx)?;
-    ctx.changed("venues");
-    Ok(json!({ "added": n }))
-}
-
 /// Refresh one publication → `{ run }`. Result on `ai-run` (`partial` = `{ publication_id, title, before, after, applied, pending }`).
 fn publication_refresh(args: &Value, ctx: &Ctx) -> Result<Value> {
     let id = args.get("id").and_then(Value::as_i64).ok_or_else(|| ApiError::field("id", "The id field is required."))?;
@@ -228,6 +220,5 @@ mod tests {
         assert_eq!(dispatch("proposals.apply", &json!({ "all": true }), &ctx).unwrap()["applied"], 1);
         assert_eq!(dispatch("proposals.count", &json!({}), &ctx).unwrap(), 0);
         assert!(dispatch("venues.research", &json!({ "id": 999 }), &ctx).is_err());
-        assert!(dispatch("venues.restoreCatalog", &json!({}), &ctx).unwrap()["added"].as_i64().unwrap() > 10);
     }
 }

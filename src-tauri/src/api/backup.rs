@@ -17,6 +17,11 @@
 //! | `backup.restore` | `{ name }` → replaces the data with that copy (after saving a copy of the current data). |
 //! | `backup.setAuto` | `{ auto }` → daily copies on or off. |
 //! | `backup.reveal` | Opens the backups folder. |
+//! | `backup.cloud` | → `{ dir, service, available, auto, files, folder, last, error, keep, backups, candidates: [{ service, path }] }`. |
+//! | `backup.setCloud` | `{ dir?: string \| null, pick?, auto?, files? }` → choose the synced folder (iCloud Drive, Google Drive, Dropbox, OneDrive or any folder), turn daily cloud backups or attached files on or off, or stop; the new `backup.cloud`. |
+//! | `backup.cloudNow` | → today's full `.zip` (data and files) in the cloud folder now; `{ name, path, files }`. |
+//! | `backup.revealCloud` | Opens the cloud backups folder. |
+//! | `backup.restoreCloud` | `{ name }` → imports that cloud backup (adds records, deletes nothing); `{ summary, user_created }`. |
 
 use crate::api::Ctx;
 use crate::db::{Db, Query, USER_ID};
@@ -50,6 +55,11 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "backup.restore" => restore(args, ctx),
         "backup.setAuto" => set_auto(args, ctx),
         "backup.reveal" => reveal(ctx),
+        "backup.cloud" => cloud(ctx),
+        "backup.setCloud" => set_cloud(args, ctx),
+        "backup.cloudNow" => cloud_now(ctx),
+        "backup.revealCloud" => reveal_cloud(ctx),
+        "backup.restoreCloud" => restore_cloud(args, ctx),
         _ => return None,
     })
 }
@@ -1104,15 +1114,330 @@ pub fn start_auto(ctx: Ctx) {
         .spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(60));
             loop {
-                if setting::get_bool(&ctx.db, "backup.auto") && ctx.db.find("users", USER_ID).ok().flatten().is_some() {
+                let has_user = ctx.db.find("users", USER_ID).ok().flatten().is_some();
+                if setting::get_bool(&ctx.db, "backup.auto") && has_user {
                     if let Ok(dir) = ctx.data_dir() {
                         let _ = ensure_daily(&ctx.db, &backups_dir(&dir));
                     }
+                }
+                if has_user && cloud_auto(&ctx.db) {
+                    let _ = ensure_cloud_daily(&ctx);
                 }
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             }
         })
         .ok();
+}
+
+// ---- Backups in a synced cloud folder ----------------------------------------------------------------
+//
+// Free cloud services (iCloud Drive, Google Drive, Dropbox, OneDrive) all sync a folder on the computer.
+// The app writes a full `.zip` backup (data and attached files) into a "Manuscript Tracker backups" folder
+// inside the one the user chooses, once a day, and the service uploads it. No account, sign-in or key is
+// needed, and nothing goes anywhere the user's own sync client does not already send it. The folder is a
+// per-computer setting, so it is not part of exported backups.
+
+/// Zip backups kept in the cloud folder.
+pub const KEEP_CLOUD: usize = 10;
+/// Folder the backups go into, inside the chosen synced folder.
+pub const CLOUD_SUBDIR: &str = "Manuscript Tracker backups";
+const CLOUD_DIR_KEY: &str = "backup.cloud_dir";
+const CLOUD_AUTO_KEY: &str = "backup.cloud_auto";
+const CLOUD_FILES_KEY: &str = "backup.cloud_files";
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// The service a folder belongs to, from its path.
+pub fn service_of(path: &Path) -> &'static str {
+    let p = path.to_string_lossy().to_lowercase().replace('\\', "/");
+    if p.contains("mobile documents/com~apple~clouddocs") || p.contains("/iclouddrive") {
+        "iCloud Drive"
+    } else if p.contains("googledrive") || p.contains("google drive") || p.contains("/my drive") {
+        "Google Drive"
+    } else if p.contains("dropbox") {
+        "Dropbox"
+    } else if p.contains("onedrive") {
+        "OneDrive"
+    } else if p.contains("/box") || p.contains("box-box") {
+        "Box"
+    } else if p.contains("pcloud") {
+        "pCloud"
+    } else {
+        "Folder"
+    }
+}
+
+/// Synced folders of common cloud services found on this computer, as `(service, path)`.
+pub fn cloud_candidates() -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    // Shortcuts such as ~/Google Drive point at the same folders: compare real paths, and use the account's
+    // "My Drive" for Google Drive.
+    let mut add = |p: PathBuf| {
+        let Ok(real) = std::fs::canonicalize(&p) else {
+            return;
+        };
+        let is_google_account = real.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase().starts_with("googledrive"));
+        let real = if is_google_account {
+            std::fs::read_dir(&real)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .find(|q| q.is_dir() && q.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase().contains("my drive")))
+                .unwrap_or(real)
+        } else {
+            real
+        };
+        if real.is_dir() && !out.iter().any(|(_, q)| q == &real) {
+            out.push((service_of(&real).to_string(), real));
+        }
+    };
+    let Some(home) = home_dir() else {
+        return out;
+    };
+    // macOS: iCloud Drive, and the File Provider folders of Google Drive, Dropbox, OneDrive and Box.
+    add(home.join("Library/Mobile Documents/com~apple~CloudDocs"));
+    if let Ok(rd) = std::fs::read_dir(home.join("Library/CloudStorage")) {
+        let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        entries.sort();
+        for p in entries {
+            let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            // Google Drive for desktop mounts the account; add() picks its "My Drive".
+            if name.starts_with("googledrive")
+                || name.starts_with("dropbox")
+                || name.starts_with("onedrive")
+                || name.starts_with("box")
+                || name.starts_with("pcloud")
+            {
+                add(p);
+            }
+        }
+    }
+    // Windows and Linux, and older macOS clients.
+    add(home.join("iCloudDrive"));
+    for var in ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"] {
+        if let Some(v) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+            add(PathBuf::from(v));
+        }
+    }
+    for name in ["OneDrive", "Dropbox", "Google Drive", "My Drive", "pCloudDrive", "Box"] {
+        add(home.join(name));
+    }
+    if cfg!(windows) {
+        // Google Drive for desktop shows up as its own drive letter (G: by default).
+        for letter in 'D'..='Z' {
+            add(PathBuf::from(format!("{letter}:\\My Drive")));
+        }
+    }
+    out
+}
+
+fn cloud_dir(db: &Db) -> Option<PathBuf> {
+    setting::get(db, CLOUD_DIR_KEY).filter(|s| !s.trim().is_empty()).map(PathBuf::from)
+}
+
+fn cloud_auto(db: &Db) -> bool {
+    cloud_dir(db).is_some() && setting::get(db, CLOUD_AUTO_KEY).is_none_or(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+}
+
+/// Whether cloud backups include the attached files (on unless turned off).
+fn cloud_files(db: &Db) -> bool {
+    setting::get(db, CLOUD_FILES_KEY).is_none_or(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+}
+
+fn valid_cloud_name(name: &str) -> bool {
+    name.starts_with("manuscript-tracker-") && name.ends_with(".zip") && !name.contains("..") && !name.contains('/')
+}
+
+/// Zip backups in the cloud folder, newest first.
+fn cloud_list(dir: &Path) -> Vec<Value> {
+    let mut out: Vec<(String, Value)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !valid_cloud_name(&name) {
+                return None;
+            }
+            let meta = e.metadata().ok()?;
+            let modified: DateTime<Local> = meta.modified().ok()?.into();
+            let size = meta.len() as i64;
+            Some((
+                modified.format("%Y%m%d%H%M%S").to_string(),
+                json!({ "name": name, "created_at": modified.format(TS_FORMAT).to_string(), "size": size, "human_size": paper_file::human_size(size) }),
+            ))
+        })
+        .collect();
+    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Write today's full backup (data and files) into `<chosen folder>/Manuscript Tracker backups`.
+fn write_cloud_backup(ctx: &Ctx, base: &Path) -> Result<Value> {
+    if !base.is_dir() {
+        return Err(ApiError::msg(format!(
+            "The folder {} is not available. Check that your cloud app is running, or choose the folder again.",
+            base.to_string_lossy()
+        )));
+    }
+    let dir = base.join(CLOUD_SUBDIR);
+    std::fs::create_dir_all(&dir)?;
+    let name = format!("manuscript-tracker-{}.zip", Local::now().format("%Y-%m-%d"));
+    let dest = dir.join(&name);
+    let root = crate::files::root(ctx)?;
+    let with_files = cloud_files(&ctx.db);
+    let (data, packed) = ctx.db.with(|c| export_full(c, with_files.then_some(root.as_path())))?;
+    // Write beside the target and rename, so the sync client never uploads a half-written file.
+    let tmp = dir.join(format!(".{name}.part"));
+    let res = std::fs::File::create(&tmp).map_err(ApiError::from).and_then(|f| write_zip(f, &data, &packed));
+    let files = match res {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    std::fs::rename(&tmp, &dest)?;
+    for old in cloud_list(&dir).into_iter().skip(KEEP_CLOUD) {
+        if let Some(n) = old["name"].as_str().filter(|n| valid_cloud_name(n)) {
+            let _ = std::fs::remove_file(dir.join(n));
+        }
+    }
+    setting::put(&ctx.db, "backup.cloud_last", Some(&now_ts()))?;
+    setting::put(&ctx.db, "backup.cloud_error", None)?;
+    Ok(json!({ "name": name, "path": dest.to_string_lossy(), "files": files }))
+}
+
+/// Make today's cloud backup if there is none yet (daily thread).
+pub fn ensure_cloud_daily(ctx: &Ctx) -> Result<bool> {
+    let Some(base) = cloud_dir(&ctx.db) else {
+        return Ok(false);
+    };
+    let today = format!("manuscript-tracker-{}.zip", Local::now().format("%Y-%m-%d"));
+    if base.join(CLOUD_SUBDIR).join(&today).is_file() {
+        return Ok(false);
+    }
+    match write_cloud_backup(ctx, &base) {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            let _ = setting::put(&ctx.db, "backup.cloud_error", Some(&e.to_string()));
+            Err(e)
+        }
+    }
+}
+
+/// `backup.cloud` → `{ dir, service, auto, folder, last, error, backups, candidates: [{ service, path }] }`.
+fn cloud(ctx: &Ctx) -> Result<Value> {
+    let dir = cloud_dir(&ctx.db);
+    let folder = dir.as_ref().map(|d| d.join(CLOUD_SUBDIR));
+    Ok(json!({
+        "dir": dir.as_ref().map(|d| d.to_string_lossy().to_string()),
+        "service": dir.as_ref().map(|d| service_of(d)),
+        "available": dir.as_ref().is_some_and(|d| d.is_dir()),
+        "auto": cloud_auto(&ctx.db),
+        "files": cloud_files(&ctx.db),
+        "folder": folder.as_ref().map(|f| f.to_string_lossy().to_string()),
+        "last": setting::get(&ctx.db, "backup.cloud_last"),
+        "error": setting::get(&ctx.db, "backup.cloud_error"),
+        "keep": KEEP_CLOUD,
+        "backups": folder.as_ref().map(|f| cloud_list(f)).unwrap_or_default(),
+        "candidates": cloud_candidates().into_iter().map(|(s, p)| json!({ "service": s, "path": p.to_string_lossy() })).collect::<Vec<_>>(),
+    }))
+}
+
+/// `backup.setCloud` `{ dir?: string|null, pick?: bool, auto?: bool }`: choose the synced folder (from the list,
+/// or with the folder dialog when `pick`), turn daily backups on or off, or stop (`dir: null`). Choosing a
+/// folder makes the first backup straight away.
+fn set_cloud(args: &Value, ctx: &Ctx) -> Result<Value> {
+    ctx.require_user()?;
+    if let Some(auto) = args.get("auto").and_then(Value::as_bool) {
+        setting::put(&ctx.db, CLOUD_AUTO_KEY, Some(if auto { "1" } else { "0" }))?;
+    }
+    if let Some(files) = args.get("files").and_then(Value::as_bool) {
+        setting::put(&ctx.db, CLOUD_FILES_KEY, Some(if files { "1" } else { "0" }))?;
+    }
+    let chosen: Option<PathBuf> = if args.get("pick").and_then(Value::as_bool) == Some(true) {
+        use tauri_plugin_dialog::DialogExt;
+        let app = ctx.app()?;
+        let mut dialog = app.dialog().file().set_title("Choose a folder that your cloud service syncs");
+        if let Some(home) = home_dir() {
+            dialog = dialog.set_directory(home);
+        }
+        if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
+            dialog = dialog.set_parent(&w);
+        }
+        match dialog.blocking_pick_folder() {
+            Some(p) => Some(p.into_path().map_err(|e| ApiError::msg(format!("Could not use that folder: {e}")))?),
+            None => return cloud(ctx),
+        }
+    } else {
+        match args.get("dir") {
+            Some(Value::Null) => {
+                setting::put(&ctx.db, CLOUD_DIR_KEY, None)?;
+                setting::put(&ctx.db, "backup.cloud_error", None)?;
+                return cloud(ctx);
+            }
+            Some(Value::String(s)) if !s.trim().is_empty() => Some(PathBuf::from(s.trim())),
+            Some(_) => return Err(ApiError::field("dir", "Choose a folder.")),
+            None => None,
+        }
+    };
+    if let Some(p) = chosen {
+        if !p.is_dir() {
+            return Err(ApiError::field("dir", "That folder does not exist."));
+        }
+        // The backups go into their own folder; choosing that folder itself means its parent.
+        let p = if p.file_name().is_some_and(|n| n == CLOUD_SUBDIR) { p.parent().map(Path::to_path_buf).unwrap_or(p) } else { p };
+        setting::put(&ctx.db, CLOUD_DIR_KEY, Some(&p.to_string_lossy()))?;
+        if let Err(e) = write_cloud_backup(ctx, &p) {
+            setting::put(&ctx.db, "backup.cloud_error", Some(&e.to_string()))?;
+        }
+    }
+    cloud(ctx)
+}
+
+/// `backup.cloudNow` → today's backup in the cloud folder now; `{ name, path, files }`.
+fn cloud_now(ctx: &Ctx) -> Result<Value> {
+    ctx.require_user()?;
+    let base = cloud_dir(&ctx.db).ok_or_else(|| ApiError::msg("Choose a cloud folder first."))?;
+    write_cloud_backup(ctx, &base).inspect_err(|e| {
+        let _ = setting::put(&ctx.db, "backup.cloud_error", Some(&e.to_string()));
+    })
+}
+
+/// `backup.revealCloud` opens the cloud backups folder.
+fn reveal_cloud(ctx: &Ctx) -> Result<Value> {
+    let base = cloud_dir(&ctx.db).ok_or_else(|| ApiError::msg("Choose a cloud folder first."))?;
+    let dir = base.join(CLOUD_SUBDIR);
+    std::fs::create_dir_all(&dir)?;
+    use tauri_plugin_opener::OpenerExt;
+    ctx.app()?
+        .opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| ApiError::msg(format!("Could not open the folder: {e}")))?;
+    Ok(json!(true))
+}
+
+/// `backup.restoreCloud` `{ name }`: adds the records of one cloud backup (the same as importing it).
+fn restore_cloud(args: &Value, ctx: &Ctx) -> Result<Value> {
+    let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+    let base = cloud_dir(&ctx.db).ok_or_else(|| ApiError::msg("Choose a cloud folder first."))?;
+    if !valid_cloud_name(name) {
+        return Err(ApiError::not_found());
+    }
+    let file = base.join(CLOUD_SUBDIR).join(name);
+    if !file.is_file() {
+        return Err(ApiError::not_found());
+    }
+    let root = crate::files::root(ctx)?;
+    let (n, created) = import_path(ctx, &file, &root)?;
+    for area in ["papers", "venues", "deadlines", "desk", "publications", "opportunities", "settings"] {
+        ctx.changed(area);
+    }
+    Ok(json!({ "summary": summary(&n), "user_created": created }))
 }
 
 #[cfg(test)]

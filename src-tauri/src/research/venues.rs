@@ -1,11 +1,12 @@
-//! Venue research (port of VenueResearcher::research/clean/apply and the venues:refresh command), plus the
-//! starter catalogue (VenueCatalog).
+//! Venue research (port of VenueResearcher::research/clean/apply and the venues:refresh command), plus
+//! suggestions of journals and conferences from the user's research interests.
 //!
 //! Order of sources: OpenAlex (journals: publisher, homepage, APC) and WikiCFP (conferences: next edition,
 //! deadline, official link) give structured facts; the venue's own pages (homepage, call for papers, author
 //! guidelines, found through links) are fetched and the AI extracts the remaining fields from that text with
 //! a quote per field; the provider's web search is used only for fields still missing. Everything becomes
-//! proposals (see `proposals.rs`).
+//! proposals (see `proposals.rs`). Suggestions for new venues come from the user's research interests
+//! (OpenAlex, see "Suggestions" below); no venue list is built in.
 
 use super::extract::{self, Doc};
 use super::fetch::fetcher;
@@ -14,7 +15,7 @@ use super::providers::{self, Ask};
 use super::runs::Run;
 use super::{clean_str, clean_url, evidence_from, evidence_schema, object_schema, quote_in, similarity, Evidence};
 use crate::api::Ctx;
-use crate::db::{Query, USER_ID};
+use crate::db::USER_ID;
 use crate::error::{ApiError, Result};
 use crate::util::{blank, today};
 use chrono::NaiveDate;
@@ -814,103 +815,185 @@ pub fn scheduled_refresh(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-// ---- Starter catalogue (VenueCatalog) ---------------------------------------------------------------
+// ---- Suggestions from the user's research interests -----------------------------------------------------
+//
+// Nothing field-specific is built in: every user works in a different field. For each research interest,
+// OpenAlex (free, no key, no personal data in the request) is asked which journals and conference proceedings
+// published the most English works with that phrase in the title or abstract over the last three years. A
+// venue's score for an interest is its number of such works divided by the square root of all its works, so a
+// focused journal ranks above a mega-journal that prints a few such papers among thousands. Scores are scaled
+// so the best venue for each interest gets 1, then added up over the interests.
 
-/// Conferences with proceedings (VenueCatalog::conferences).
-pub fn catalog_conferences() -> Vec<Value> {
-    vec![
-        json!({ "name": "CSCW (ACM Conference on Computer-Supported Cooperative Work)", "publisher": "ACM", "field": "HCI / CSCW", "proceedings": "PACM HCI (ACM Digital Library)", "acceptance_rate": "~25–30%", "next_edition": "Oct 2027 (unconfirmed)", "deadline_label": "Rolling submissions", "website_url": "https://cscw.acm.org/" }),
-        json!({ "name": "iConference", "publisher": "iSchools", "field": "Information science", "proceedings": "Springer LNCS", "next_edition": "22–25 Mar 2027 virtual; 5–9 Apr 2027 Wellington, NZ", "deadline_label": "Papers closed 15 Sep 2026", "website_url": "https://www.ischools.org/post/iconference-2027-call-for-papers" }),
-        json!({ "name": "CHI (ACM Conference on Human Factors in Computing Systems)", "publisher": "ACM", "field": "HCI", "proceedings": "ACM Digital Library", "acceptance_rate": "~25%", "next_edition": "10–14 May 2027, Pittsburgh", "deadline_on": "2027-01-21", "deadline_label": "Posters (papers closed 10 Sep)", "website_url": "https://chi2027.acm.org/" }),
-        json!({ "name": "AMCIS (Americas Conference on Information Systems)", "publisher": "AIS", "field": "Information systems", "proceedings": "AIS eLibrary", "next_edition": "28–30 Jul 2027, São Paulo", "deadline_on": "2027-02-26", "deadline_label": "Full papers (~late Feb)", "deadline_expected": true, "website_url": "https://aisnet.org/?p=5479" }),
-        json!({ "name": "AOM Annual Meeting (OCIS division)", "publisher": "Academy of Management", "field": "Management / IS", "proceedings": "Academy of Management Proceedings", "next_edition": "30 Jul–3 Aug 2027, Vienna", "deadline_on": "2027-01-15", "deadline_label": "Papers (~mid-Jan)", "deadline_expected": true, "website_url": "https://www.aom.org/news/aom-2027-annual-meeting-update/" }),
-        json!({ "name": "ECSCW (European Conference on Computer-Supported Cooperative Work)", "publisher": "EUSSET", "field": "CSCW", "proceedings": "EUSSET Digital Library", "next_edition": "2027, Limassol, Cyprus", "deadline_on": "2027-03-01", "deadline_label": "Papers (~early Mar)", "deadline_expected": true, "website_url": "https://ecscw.eusset.eu/" }),
-        json!({ "name": "ASIS&T Annual Meeting", "publisher": "ASIS&T", "field": "Information science", "proceedings": "Proceedings of the ASIS&T (Wiley)", "next_edition": "Nov 2027, Vancouver", "deadline_on": "2027-04-01", "deadline_label": "Papers (~Apr)", "deadline_expected": true, "website_url": "https://www.asist.org/am/" }),
-        json!({ "name": "ICIS (International Conference on Information Systems)", "publisher": "AIS", "field": "Information systems", "proceedings": "AIS eLibrary", "acceptance_rate": "~25–30%", "next_edition": "12–15 Dec 2027, Orlando", "deadline_on": "2027-05-01", "deadline_label": "Full papers (~1 May)", "deadline_expected": true, "website_url": "https://aisnet.org/conferences/the-international-conference-on-information-systems/" }),
-        json!({ "name": "IEEE eScience", "publisher": "IEEE", "field": "Research computing", "proceedings": "IEEE Xplore", "deadline_on": "2027-05-15", "deadline_label": "Papers (~Apr–Jun)", "deadline_expected": true, "website_url": "https://www.escience-conference.org/" }),
-        json!({ "name": "HAI (International Conference on Human-Agent Interaction)", "publisher": "ACM", "field": "HCI / AI", "proceedings": "ACM Digital Library", "deadline_on": "2027-06-01", "deadline_label": "Papers (~late May/early Jun)", "deadline_expected": true, "website_url": "https://hai-conference.net/" }),
-        json!({ "name": "HICSS (Hawaii International Conference on System Sciences)", "publisher": "University of Hawaiʻi", "field": "Information systems", "proceedings": "ScholarSpace (open access)", "acceptance_rate": "~47%", "next_edition": "HICSS-61, Jan 2028, Hawaii", "deadline_on": "2027-06-15", "deadline_label": "Full papers (~15 Jun)", "deadline_expected": true, "website_url": "https://hicss.hawaii.edu/" }),
-        json!({ "name": "ACM GROUP", "publisher": "ACM", "field": "CSCW", "proceedings": "PACM HCI (ACM Digital Library)", "acceptance_rate": "~30%", "deadline_label": "Every two years; next call ~mid-2027 for GROUP 2029", "website_url": "https://group.acm.org/conferences/group27/papers.php" }),
-        json!({ "name": "ECIS (European Conference on Information Systems)", "publisher": "AIS", "field": "Information systems", "proceedings": "AIS eLibrary", "next_edition": "24–26 May 2027, Luxembourg", "deadline_label": "Full papers closed 30 Oct 2026", "website_url": "https://ecis2027.uni.lu/" }),
-        json!({ "name": "VL/HCC (IEEE Symposium on Visual Languages and Human-Centric Computing)", "publisher": "IEEE", "field": "HCI", "proceedings": "IEEE Xplore", "website_url": "https://conf.researchr.org/home/vlhcc-2027" }),
-        json!({ "name": "PACIS (Pacific Asia Conference on Information Systems)", "publisher": "AIS", "field": "Information systems", "proceedings": "AIS eLibrary" }),
-        json!({ "name": "ACIS (Australasian Conference on Information Systems)", "publisher": "AIS", "field": "Information systems", "proceedings": "AIS eLibrary" }),
-        json!({ "name": "ICWSM (International AAAI Conference on Web and Social Media)", "publisher": "AAAI", "field": "Social computing", "proceedings": "AAAI Digital Library", "website_url": "https://www.icwsm.org/" }),
-        json!({ "name": "DIS (ACM Designing Interactive Systems)", "publisher": "ACM", "field": "HCI / design", "proceedings": "ACM Digital Library", "website_url": "https://dis.acm.org/" }),
-        json!({ "name": "ACM FAccT (Fairness, Accountability, and Transparency)", "publisher": "ACM", "field": "AI and society", "proceedings": "ACM Digital Library", "website_url": "https://facctconference.org/" }),
-        json!({ "name": "AIES (AAAI/ACM Conference on AI, Ethics, and Society)", "publisher": "AAAI / ACM", "field": "AI and society", "proceedings": "AAAI Digital Library" }),
-        json!({ "name": "ACM CHIIR (Human Information Interaction and Retrieval)", "publisher": "ACM", "field": "Information science", "proceedings": "ACM Digital Library" }),
-        json!({ "name": "JCDL (ACM/IEEE Joint Conference on Digital Libraries)", "publisher": "ACM / IEEE", "field": "Information science", "proceedings": "ACM Digital Library" }),
-        json!({ "name": "ACM COMPASS (Computing and Sustainable Societies)", "publisher": "ACM", "field": "ICT4D", "proceedings": "ACM Digital Library" }),
-        json!({ "name": "IFIP WG 9.4 Conference (Social Implications of Computers in Developing Countries)", "publisher": "IFIP", "field": "ICT4D", "proceedings": "Springer IFIP AICT" }),
-    ]
+/// Fewest matching works for a venue to be suggested for an interest.
+const MIN_HITS: i64 = 3;
+/// Interests used (the rest are ignored, to keep the number of requests small).
+pub const MAX_TERMS: usize = 8;
+
+/// One suggested venue.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Suggestion {
+    pub openalex_id: String,
+    pub name: String,
+    pub kind: String,
+    pub publisher: Option<String>,
+    pub website_url: Option<String>,
+    pub score: f64,
+    /// `(interest, matching works)`, best first.
+    pub hits: Vec<(String, i64)>,
 }
 
-/// Journals (VenueCatalog::journals).
-pub fn catalog_journals() -> Vec<Value> {
-    let j = |name: &str, publisher: &str, field: &str| json!({ "name": name, "publisher": publisher, "field": field });
-    vec![
-        j("MIS Quarterly", "MISRC, University of Minnesota", "Information systems"),
-        j("Information Systems Research", "INFORMS", "Information systems"),
-        j("Journal of the Association for Information Systems", "AIS", "Information systems"),
-        j("European Journal of Information Systems", "Taylor & Francis", "Information systems"),
-        j("Information Systems Journal", "Wiley", "Information systems"),
-        j("Journal of Information Technology", "SAGE", "Information systems"),
-        j("Journal of Management Information Systems", "Taylor & Francis", "Information systems"),
-        j("Journal of Strategic Information Systems", "Elsevier", "Information systems"),
-        j("Information and Organization", "Elsevier", "Information systems"),
-        j("Information & Management", "Elsevier", "Information systems"),
-        j("International Journal of Information Management", "Elsevier", "Information systems"),
-        j("Information Technology & People", "Emerald", "Information systems"),
-        j("Communications of the Association for Information Systems", "AIS", "Information systems"),
-        j("Information Technology for Development", "Taylor & Francis", "ICT4D"),
-        j("The Electronic Journal of Information Systems in Developing Countries", "Wiley", "ICT4D"),
-        j("Third World Quarterly", "Taylor & Francis", "Development studies"),
-        j("Journal of the Association for Information Science and Technology", "Wiley", "Information science"),
-        j("The Information Society", "Taylor & Francis", "Information science"),
-        j("Journal of Documentation", "Emerald", "Information science"),
-        j("Proceedings of the ACM on Human-Computer Interaction (PACM HCI)", "ACM", "HCI / CSCW"),
-        j("Computer Supported Cooperative Work (CSCW)", "Springer", "CSCW"),
-        j("ACM Transactions on Computer-Human Interaction", "ACM", "HCI"),
-        j("Human–Computer Interaction", "Taylor & Francis", "HCI"),
-        j("ACM AI Letters", "ACM", "AI"),
-        j("New Technology, Work and Employment", "Wiley", "Sociology of work"),
-        j("Work, Employment and Society", "SAGE", "Sociology of work"),
-        j("New Media & Society", "SAGE", "Media and communication"),
-        j("Information, Communication & Society", "Taylor & Francis", "Media and communication"),
-        j("Big Data & Society", "SAGE", "Media and communication"),
-    ]
+/// Facts about one OpenAlex source.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceFacts {
+    pub name: String,
+    pub kind: String,
+    pub works: i64,
+    pub publisher: Option<String>,
+    pub homepage: Option<String>,
 }
 
-/// Add catalogue venues the user does not have yet (VenueCatalog::seedFor). Returns how many were added.
-pub fn seed_catalog(ctx: &Ctx) -> Result<usize> {
-    let have: Vec<String> = ctx
-        .db
-        .rows("SELECT name FROM venues WHERE user_id = ?1", [USER_ID])?
-        .iter()
-        .filter_map(|r| r["name"].as_str().map(str::to_lowercase))
-        .collect();
-    let mut n = 0;
-    ctx.db.tx(|tx| {
-        for (kind, rows) in [("conference", catalog_conferences()), ("journal", catalog_journals())] {
-            for mut row in rows {
-                let name = row["name"].as_str().unwrap_or("").to_lowercase();
-                if have.contains(&name) {
-                    continue;
-                }
-                if let Some(o) = row.as_object_mut() {
-                    o.retain(|_, v| !v.is_null());
-                    o.insert("user_id".into(), json!(USER_ID));
-                    o.insert("kind".into(), json!(kind));
-                    o.insert("watch".into(), json!(kind == "conference"));
-                }
-                tx.insert("venues", &row)?;
-                n += 1;
+/// Interests as separate phrases: split on commas, semicolons and new lines; at most [`MAX_TERMS`].
+pub fn interest_terms(interests: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in interests.split([',', ';', '\n']) {
+        let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+        if t.chars().filter(|c| c.is_alphanumeric()).count() >= 2 && !out.iter().any(|o| o.eq_ignore_ascii_case(&t)) {
+            out.push(t);
+        }
+    }
+    out.truncate(MAX_TERMS);
+    out
+}
+
+/// OpenAlex search phrase: letters, digits, spaces and hyphens only (the filter syntax uses `,` `|` `:`).
+fn phrase(term: &str) -> String {
+    let t: String = term.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { ' ' }).collect();
+    t.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn group_url(term: &str, from: &str) -> String {
+    let q = format!("\"{}\"", phrase(term));
+    format!(
+        "https://api.openalex.org/works?filter=title_and_abstract.search:{},from_publication_date:{from},language:en&group_by=primary_location.source.id&per-page=60",
+        enc(&q)
+    )
+}
+
+/// `(source id, works)` from an OpenAlex `group_by` response.
+pub fn parse_groups(resp: &Value) -> Vec<(String, i64)> {
+    resp.get("group_by")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|g| {
+                    let key = g.get("key")?.as_str()?;
+                    let id = key.rsplit('/').next()?.to_string();
+                    (id.starts_with('S') && id.len() > 1).then(|| (id, g.get("count").and_then(Value::as_i64).unwrap_or(0)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Facts from an OpenAlex `/sources` response, by source id.
+pub fn parse_sources(resp: &Value) -> BTreeMap<String, SourceFacts> {
+    let mut out = BTreeMap::new();
+    for r in resp.get("results").and_then(Value::as_array).into_iter().flatten() {
+        let Some(id) = r.get("id").and_then(Value::as_str).and_then(|u| u.rsplit('/').next()) else {
+            continue;
+        };
+        out.insert(
+            id.to_string(),
+            SourceFacts {
+                name: r.get("display_name").and_then(Value::as_str).unwrap_or("").trim().to_string(),
+                kind: r.get("type").and_then(Value::as_str).unwrap_or("").to_string(),
+                works: r.get("works_count").and_then(Value::as_i64).unwrap_or(0),
+                publisher: r.get("host_organization_name").and_then(Value::as_str).map(str::to_string).filter(|s| !s.is_empty()),
+                homepage: r.get("homepage_url").and_then(|u| clean_url(u, 500)),
+            },
+        );
+    }
+    out
+}
+
+/// Rank venues over all interests (see the section comment). Only journals and conference proceedings.
+pub fn rank(groups: &[(String, Vec<(String, i64)>)], facts: &BTreeMap<String, SourceFacts>) -> Vec<Suggestion> {
+    let mut by_id: BTreeMap<String, Suggestion> = BTreeMap::new();
+    for (term, list) in groups {
+        let scored: Vec<(&String, i64, f64)> = list
+            .iter()
+            .filter(|(_, n)| *n >= MIN_HITS)
+            .filter_map(|(id, n)| {
+                let f = facts.get(id)?;
+                (matches!(f.kind.as_str(), "journal" | "conference") && !f.name.is_empty())
+                    .then(|| (id, *n, *n as f64 / (f.works.max(*n).max(1) as f64).sqrt()))
+            })
+            .collect();
+        let top = scored.iter().map(|s| s.2).fold(0.0_f64, f64::max);
+        if top <= 0.0 {
+            continue;
+        }
+        for (id, n, sc) in scored {
+            let f = &facts[id];
+            let e = by_id.entry(id.clone()).or_insert_with(|| Suggestion {
+                openalex_id: id.clone(),
+                name: f.name.clone(),
+                kind: f.kind.clone(),
+                publisher: f.publisher.clone(),
+                website_url: f.homepage.clone(),
+                ..Default::default()
+            });
+            e.score += sc / top;
+            e.hits.push((term.clone(), n));
+        }
+    }
+    let mut out: Vec<Suggestion> = by_id.into_values().collect();
+    for s in &mut out {
+        s.hits.sort_by_key(|h| std::cmp::Reverse(h.1));
+    }
+    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.name.cmp(&b.name)));
+    out
+}
+
+/// Suggest journals and conferences for the interests. Returns `(suggestions, interests that failed)`.
+pub async fn suggest(interests: &str) -> (Vec<Suggestion>, Vec<String>) {
+    let terms = interest_terms(interests);
+    let from = (today() - chrono::Duration::days(3 * 365)).format("%Y-%m-%d").to_string();
+    let mut set = tokio::task::JoinSet::new();
+    for t in terms.clone() {
+        let url = group_url(&t, &from);
+        set.spawn(async move { (t, fetcher().json(&url).await) });
+    }
+    let mut groups: Vec<(String, Vec<(String, i64)>)> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    while let Some(r) = set.join_next().await {
+        match r {
+            Ok((t, Ok(v))) => groups.push((t, parse_groups(&v))),
+            Ok((t, Err(_))) => failed.push(t),
+            Err(_) => {}
+        }
+    }
+    // Keep the interests in the order the user wrote them.
+    groups.sort_by_key(|(t, _)| terms.iter().position(|x| x == t).unwrap_or(usize::MAX));
+    let mut ids: Vec<String> = Vec::new();
+    for (_, list) in &groups {
+        for (id, n) in list {
+            if *n >= MIN_HITS && !ids.contains(id) {
+                ids.push(id.clone());
             }
         }
-        Ok(())
-    })?;
-    Ok(n)
+    }
+    let mut facts = BTreeMap::new();
+    for chunk in ids.chunks(50) {
+        let url = format!(
+            "https://api.openalex.org/sources?filter=ids.openalex:{}&per-page=50&select=id,display_name,type,works_count,host_organization_name,homepage_url",
+            chunk.join("|")
+        );
+        if let Ok(v) = fetcher().json(&url).await {
+            facts.extend(parse_sources(&v));
+        }
+    }
+    (rank(&groups, &facts), failed)
 }
 
 #[cfg(test)]
@@ -1019,13 +1102,29 @@ mod tests {
     }
 
     #[test]
-    fn catalog_seeds_once() {
-        let ctx = Ctx::for_tests(crate::db::test_db());
-        let n = seed_catalog(&ctx).unwrap();
-        assert_eq!(n, catalog_conferences().len() + catalog_journals().len());
-        assert_eq!(seed_catalog(&ctx).unwrap(), 0);
-        let chi = ctx.db.first("SELECT * FROM venues WHERE name LIKE 'CHI (%'", []).unwrap().unwrap();
-        assert_eq!(chi["watch"], true);
-        assert_eq!(chi["deadline_on"], "2027-01-21");
+    fn suggestions_rank_specialised_venues() {
+        assert_eq!(interest_terms("polymer chemistry; Catalysis,\ncatalysis , x"), vec!["polymer chemistry", "Catalysis"]);
+        assert_eq!(phrase("C-H activation: \"new\""), "C-H activation new");
+        let groups = vec![
+            ("polymer chemistry".to_string(), vec![("S1".into(), 40), ("S2".into(), 300), ("S3".into(), 2), ("S4".into(), 50)]),
+            ("catalysis".to_string(), vec![("S1".into(), 10), ("S5".into(), 90)]),
+        ];
+        let f = |name: &str, kind: &str, works: i64| SourceFacts { name: name.into(), kind: kind.into(), works, ..Default::default() };
+        let facts: BTreeMap<String, SourceFacts> = [
+            ("S1".to_string(), f("Polymer Chemistry", "journal", 1600)),
+            ("S2".to_string(), f("Scientific Reports", "journal", 250000)),
+            ("S3".to_string(), f("Tiny", "journal", 10)),
+            ("S4".to_string(), f("arXiv", "repository", 2000000)),
+            ("S5".to_string(), f("ACS Catalysis", "journal", 8100)),
+        ]
+        .into_iter()
+        .collect();
+        let r = rank(&groups, &facts);
+        let names: Vec<&str> = r.iter().map(|s| s.name.as_str()).collect();
+        // Specialised journals first, the mega-journal last, repositories and venues below MIN_HITS left out.
+        assert_eq!(names, vec!["Polymer Chemistry", "ACS Catalysis", "Scientific Reports"]);
+        assert_eq!(r[0].hits, vec![("polymer chemistry".to_string(), 40), ("catalysis".to_string(), 10)]);
+        let g = parse_groups(&json!({ "group_by": [{ "key": "https://openalex.org/S9", "count": 7 }, { "key": "unknown", "count": 3 }] }));
+        assert_eq!(g, vec![("S9".to_string(), 7)]);
     }
 }

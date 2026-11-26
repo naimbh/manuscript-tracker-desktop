@@ -160,7 +160,7 @@ async function restore() {
                             <FluxField>
                                 <FluxLabel>Research interests</FluxLabel>
                                 <FluxDescription>Topics separated by commas.</FluxDescription>
-                                <FluxTextarea v-model="form.interests" name="interests" rows="3" placeholder="platform labor, CSCW, ICT4D" />
+                                <FluxTextarea v-model="form.interests" name="interests" rows="3" placeholder="e.g. polymer chemistry, catalysis, green synthesis" />
                                 <FluxError name="interests" />
                             </FluxField>
                             <FluxField>

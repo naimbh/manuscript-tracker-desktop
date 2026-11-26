@@ -84,6 +84,16 @@ const files = computed(() => detail.value?.files ?? []);
 const deadlines = computed(() => detail.value?.deadlines ?? []);
 const venues = computed(() => detail.value?.venues ?? []);
 const risk = computed(() => detail.value?.risk ?? null);
+async function dismissRisk() {
+  try {
+    await api('app.dismissNotice', { key: risk.value.key });
+    await load();
+    papersChanged('papers-detail', props.id);
+    toast({ text: 'Warning dismissed for this submission. Settings → General brings dismissed warnings back.' });
+  } catch (e) {
+    toast({ variant: 'danger', text: e.message });
+  }
+}
 const proof = computed(() => files.value.find((f) => f.kind === 'proof') ?? null);
 
 const chron = computed(() => [...subs.value].sort((a, b) => ((a.submitted_on ?? '') < (b.submitted_on ?? '') ? -1 : (a.submitted_on ?? '') > (b.submitted_on ?? '') ? 1 : a.id - b.id)));
@@ -211,14 +221,19 @@ async function copyCredit() {
 }
 
 /* ---------- files ---------- */
-function openUpload(dropped = []) { fileForms.value?.open(dropped); }
+// Files attached from a submission card stay on the Overview; other uploads switch to the Files tab.
+let stayOnTab = false;
+function openUpload(dropped = [], submissionId = '') { stayOnTab = !!submissionId; fileForms.value?.open(dropped, submissionId); }
+function editFile(f) { stayOnTab = true; fileForms.value?.edit(f); }
+const filesOf = (sub) => files.value.filter((f) => f.submission_id === sub.id);
 async function onFileSaved(msg) {
   await load();
   papersChanged('papers-detail', props.id);
   if (msg) {
     toast({ variant: 'success', text: msg });
-    if (tab.value !== 'files') setTab('files');
+    if (tab.value !== 'files' && !stayOnTab) setTab('files');
   }
+  stayOnTab = false;
 }
 function preview(f) { fileForms.value?.preview(f); }
 async function fileAction(name, f) {
@@ -236,6 +251,7 @@ async function deleteFile(f) {
 async function fileMenu(f) {
   const id = await contextMenu([
     { id: 'preview', label: 'Preview' },
+    { id: 'edit', label: 'Edit details…' },
     ...(isMac ? [{ id: 'quicklook', label: 'Quick Look' }] : []),
     { id: 'open', label: 'Open' },
     { id: 'reveal', label: revealLabel },
@@ -244,6 +260,7 @@ async function fileMenu(f) {
     { id: 'delete', label: 'Delete file…', danger: true },
   ]);
   if (id === 'preview') preview(f);
+  else if (id === 'edit') editFile(f);
   else if (id === 'quicklook') fileForms.value?.quickLook(f);
   else if (id === 'open') fileAction('files.open', f);
   else if (id === 'reveal') fileAction('files.reveal', f);
@@ -339,6 +356,7 @@ onBeforeUnmount(() => { ro?.disconnect(); offs.forEach((f) => f()); stopEnter?.(
         <div :key="'tab-' + tab" class="@container flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
             <FluxCallout v-if="risk" variant="danger" icon="eye" class="mb-5" heading="Anonymity risk">
                 <FluxCalloutText>This paper has a public preprint ({{ p.preprint_server || 'link' }}) while it is under double-anonymous review at {{ risk.venue_name }}. Check the venue’s preprint policy, and do not cite the preprint in the anonymized file.</FluxCalloutText>
+                <template #controls><FluxButton size="sm" variant="subtle" icon="x-mark" aria-label="Dismiss this warning" title="Dismiss (you can bring it back in Settings → General)" @click="dismissRisk" /></template>
             </FluxCallout>
 
             <!-- ================= PAPER: submissions + overview ================= -->
@@ -439,6 +457,12 @@ onBeforeUnmount(() => { ro?.disconnect(); offs.forEach((f) => f()); stopEnter?.(
                                             </UiMenu>
                                             <FluxButton size="sm" variant="ghost" icon="pencil-square" aria-label="Edit submission" @click="editSubmission(entry.sub)" />
                                         </div>
+                                    </div>
+                                    <div class="mt-2.5 flex flex-wrap items-center gap-1.5 select-none">
+                                        <button v-for="f in filesOf(entry.sub)" :key="'sf' + f.id" type="button" class="inline-flex max-w-full items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-300" :title="`${f.original_name} — preview`" @click="preview(f)" @contextmenu.prevent.stop="fileMenu(f)">
+                                            <FluxIcon name="paper-clip" variant="micro" class="size-3.5 shrink-0" /><span class="truncate">{{ f.label || f.original_name }}</span><span class="shrink-0 text-zinc-400">{{ FILE_KINDS[f.kind] ?? f.kind_label }}</span>
+                                        </button>
+                                        <button type="button" class="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-zinc-400 transition hover:text-indigo-600" title="Attach a file to this submission" @click="openUpload([], entry.sub.id)"><FluxIcon name="plus" variant="micro" class="size-3" />Attach file</button>
                                     </div>
                                     <div v-if="entry.isCur && isWaiting(entry.sub) && entry.sub.days !== null" class="mt-4 flex items-center gap-4 rounded-xl bg-zinc-50 p-3 dark:bg-zinc-800/40">
                                         <UiRing :pct="entry.sub.clock?.pct ?? 0" :size="54" :tone="ringTone(entry.sub.clock)" :label="String(entry.sub.days)" sub="days" />
@@ -612,14 +636,16 @@ onBeforeUnmount(() => { ro?.disconnect(); offs.forEach((f) => f()); stopEnter?.(
                             <div class="min-w-0 flex-1">
                                 <p class="truncate text-sm font-medium" :title="f.original_name">{{ f.label || f.original_name }}</p>
                                 <p class="text-xs text-zinc-500">{{ FILE_KINDS[f.kind] ?? f.kind_label }} · {{ f.human_size }} · {{ format(utc(f.created_at), 'j M Y') }}</p>
+                                <p v-if="f.submission_name" class="mt-0.5 truncate text-xs text-indigo-600 dark:text-indigo-400">For {{ f.submission_name }}</p>
                             </div>
                         </div>
-                        <div class="mt-3 flex gap-1">
+                        <div class="mt-3 flex flex-wrap items-center gap-1">
                             <FluxButton size="xs" icon="eye" @click="preview(f)">Preview</FluxButton>
                             <FluxButton size="xs" variant="ghost" icon="arrow-top-right-on-square" @click="fileAction('files.open', f)">Open</FluxButton>
-                            <FluxButton size="xs" variant="ghost" icon="arrow-down-tray" @click="fileForms?.saveCopy(f)">Save a copy…</FluxButton>
-                            <FluxButton size="xs" variant="ghost" icon="ellipsis-horizontal" class="ml-auto" aria-label="More file actions" @click="fileMenu(f)" />
-                            <FluxButton size="xs" variant="ghost" icon="trash" class="opacity-0 group-hover:opacity-100" aria-label="Delete file" @click="deleteFile(f)" />
+                            <FluxButton size="xs" variant="ghost" icon="arrow-down-tray" aria-label="Save a copy" title="Save a copy…" @click="fileForms?.saveCopy(f)" />
+                            <FluxButton size="xs" variant="ghost" icon="pencil-square" class="ml-auto" aria-label="Edit file details" title="Edit details" @click="editFile(f)" />
+                            <FluxButton size="xs" variant="ghost" icon="ellipsis-horizontal" aria-label="More file actions" title="More" @click="fileMenu(f)" />
+                            <FluxButton size="xs" variant="ghost" icon="trash" class="opacity-60 group-hover:opacity-100" aria-label="Delete file" title="Delete" @click="deleteFile(f)" />
                         </div>
                     </div>
                 </div>

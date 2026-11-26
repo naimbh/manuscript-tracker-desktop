@@ -4,6 +4,7 @@ import { api } from '@/lib/api.js';
 import { confirmDialog } from '@/lib/native.js';
 import { on } from '@/lib/events.js';
 import { format } from '@/lib/format.js';
+import { utc } from '@/components/shell/links.js';
 import { route } from '@/lib/router.js';
 import { toast } from '@/lib/toast.js';
 import { importBackup as shellImport } from '@/components/shell/shell.js';
@@ -129,9 +130,67 @@ async function reveal() {
     try { await api('backup.reveal'); } catch (e) { fail(e); }
 }
 
+// Cloud backup: a full .zip (data and files) in a folder that iCloud Drive, Google Drive, Dropbox or OneDrive syncs.
+const cloud = ref(null);
+const cloudBusy = ref(false);
+const cloudChoice = ref('');
+async function loadCloud() {
+    try { cloud.value = await api('backup.cloud'); } catch (e) { fail(e); }
+}
+async function setCloud(args, done) {
+    cloudBusy.value = true;
+    try {
+        cloud.value = await api('backup.setCloud', args);
+        if (done && cloud.value?.dir) {
+            if (cloud.value.error) fail({ message: cloud.value.error });
+            else toast({ variant: 'success', text: done });
+        }
+    } catch (e) {
+        fail(e);
+    } finally {
+        cloudBusy.value = false;
+        cloudChoice.value = '';
+    }
+}
+function chooseCloud() {
+    if (cloudChoice.value === '__pick') setCloud({ pick: true }, 'Backups now go to that folder. The first one is saved.');
+    else if (cloudChoice.value) setCloud({ dir: cloudChoice.value }, 'Backups now go to that folder. The first one is saved.');
+}
+async function stopCloud() {
+    if (!(await confirmDialog('Stop saving backups to this folder? Backups already there are kept.', { okLabel: 'Stop' }))) return;
+    setCloud({ dir: null });
+}
+async function cloudNow() {
+    cloudBusy.value = true;
+    try {
+        const r = await api('backup.cloudNow');
+        await loadCloud();
+        toast({ variant: 'success', text: cloud.value?.files ? `Backup saved with ${r.files} ${r.files === 1 ? 'file' : 'files'}. Your cloud app uploads it.` : 'Backup saved without files. Your cloud app uploads it.' });
+    } catch (e) {
+        fail(e);
+        await loadCloud();
+    } finally {
+        cloudBusy.value = false;
+    }
+}
+async function revealCloud() {
+    try { await api('backup.revealCloud'); } catch (e) { fail(e); }
+}
+async function restoreCloud(b) {
+    const ok = await confirmDialog(`Import the backup from ${format(b.created_at, 'j M Y, H:i')}? Its records are added; nothing here is deleted.`, { title: 'Import this backup?', okLabel: 'Import' });
+    if (!ok) return;
+    try {
+        const r = await api('backup.restoreCloud', { name: b.name });
+        toast({ variant: 'success', text: r.summary || 'Backup imported.' });
+    } catch (e) {
+        fail(e);
+    }
+}
+
 let offs = [];
 onMounted(() => {
     load();
+    loadCloud();
     // Imports started from the menu bar or the command palette reload the copies list too.
     offs.push(on('changed', (p) => { if (['settings', 'external'].includes(p?.area)) load(); }));
 });
@@ -183,6 +242,51 @@ onBeforeUnmount(() => offs.forEach((f) => f?.()));
                     <FluxHeading>Import</FluxHeading>
                     <FluxText>Adds the backup’s records to this computer. Nothing existing is deleted. Works with .json and .zip backups from this app or the web app.</FluxText>
                     <FluxButton variant="primary" icon="arrow-up-tray" :loading="importing" :disabled="importing" @click="importBackup">Import backup…</FluxButton>
+                </div>
+
+                <FluxSeparator />
+
+                <div v-if="cloud" class="space-y-3">
+                    <FluxHeading>Cloud backup</FluxHeading>
+                    <FluxText>Keep a backup of your data, with or without your attached files, in iCloud Drive, Google Drive, Dropbox, OneDrive or any other folder that a cloud service syncs for free. The app saves a .zip there once a day and keeps the last {{ cloud.keep }}; your cloud app uploads it. Nothing else leaves this computer, and no sign-in is needed. To move to a new computer, install the app and choose <span class="font-medium">Restore from a backup</span> with the latest .zip.</FluxText>
+                    <template v-if="cloud.dir">
+                        <div class="rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <p class="font-medium text-zinc-800 dark:text-zinc-200">{{ cloud.service === 'Folder' ? 'Your folder' : cloud.service }}</p>
+                                    <p class="truncate text-xs text-zinc-500" :title="cloud.folder">{{ cloud.folder }}</p>
+                                    <p class="mt-1 text-sm" :class="cloud.error ? 'text-red-600 dark:text-red-400' : 'text-zinc-500'">
+                                        <template v-if="cloud.error">{{ cloud.error }}</template>
+                                        <template v-else-if="cloud.last">Last backup {{ format(utc(cloud.last), 'D j M Y, H:i') }}</template>
+                                        <template v-else>No backup yet.</template>
+                                    </p>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <FluxButton size="sm" icon="cloud-arrow-up" :loading="cloudBusy" :disabled="cloudBusy" @click="cloudNow">Back up now</FluxButton>
+                                    <FluxButton size="sm" variant="ghost" icon="folder-open" @click="revealCloud">Show folder</FluxButton>
+                                    <FluxButton size="sm" variant="ghost" @click="stopCloud">Stop</FluxButton>
+                                </div>
+                            </div>
+                        </div>
+                        <FluxSwitch :model-value="cloud.auto" label="Back up to this folder every day" description="Runs while the app is open or in the background." @update:model-value="(v) => setCloud({ auto: v })" />
+                        <FluxSwitch :model-value="cloud.files" label="Include attached files" description="Manuscripts, letters, proofs and other files you attached. Turn this off to keep only your data, which makes the backup much smaller." @update:model-value="(v) => setCloud({ files: v })" />
+                        <div v-if="cloud.backups.length" class="divide-y divide-zinc-100 rounded-xl border border-zinc-200 dark:divide-zinc-700/60 dark:border-zinc-700">
+                            <div v-for="b in cloud.backups" :key="b.name" class="flex items-center justify-between gap-3 px-4 py-2 text-sm">
+                                <div class="min-w-0">
+                                    <p class="font-medium text-zinc-800 tabular-nums dark:text-zinc-200">{{ format(b.created_at, 'D j M Y, H:i') }}</p>
+                                    <p class="text-xs text-zinc-400">{{ b.human_size }}</p>
+                                </div>
+                                <FluxButton size="sm" variant="ghost" icon="arrow-up-tray" @click="restoreCloud(b)">Import</FluxButton>
+                            </div>
+                        </div>
+                    </template>
+                    <div class="flex flex-wrap items-end gap-2">
+                        <FluxSelect v-model="cloudChoice" class="max-w-md" :placeholder="cloud.dir ? 'Use another folder…' : 'Choose where to back up…'" @update:model-value="chooseCloud">
+                            <FluxSelectOption v-for="c in cloud.candidates" :key="c.path" :value="c.path">{{ c.service === 'Folder' ? c.path : `${c.service} — ${c.path}` }}</FluxSelectOption>
+                            <FluxSelectOption value="__pick">Another folder…</FluxSelectOption>
+                        </FluxSelect>
+                    </div>
+                    <FluxText v-if="!cloud.candidates.length" size="sm">No iCloud Drive, Google Drive, Dropbox or OneDrive folder was found on this computer. Install one of them, or choose any folder another sync app keeps.</FluxText>
                 </div>
 
                 <FluxSeparator />

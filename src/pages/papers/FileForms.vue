@@ -22,11 +22,35 @@ const errors = ref({});
 const busy = ref(false);
 provideErrors(errors);
 
-function open(dropped = []) {
+// The file being edited (kind, label and submission of a stored file), or null when uploading.
+const editing = ref(null);
+
+/** Guess the kind from a file name: proofs, cover letters, responses to reviewers, anonymized copies. */
+function guessKind(name = '') {
+  if (/proof/i.test(name)) return 'proof';
+  if (/cover/i.test(name)) return 'cover';
+  if (/respon|rebuttal|reply/i.test(name)) return 'response';
+  if (/anon|blind/i.test(name)) return 'anonymized';
+  if (/supp|appendix/i.test(name)) return 'supplementary';
+  return 'manuscript';
+}
+
+function open(dropped = [], submissionId = '') {
+  editing.value = null;
   files.value = dropped;
   fileLabel.value = '';
-  fileSubmission.value = '';
-  if (dropped.length === 1 && /proof/i.test(dropped[0].name)) fileKind.value = 'proof';
+  fileSubmission.value = submissionId || '';
+  fileKind.value = dropped.length === 1 ? guessKind(dropped[0].name) : 'manuscript';
+  errors.value = {};
+  modal('file-form').show();
+}
+
+function edit(f) {
+  editing.value = f;
+  files.value = [];
+  fileKind.value = f.kind;
+  fileLabel.value = f.label ?? '';
+  fileSubmission.value = f.submission_id ?? '';
   errors.value = {};
   modal('file-form').show();
 }
@@ -34,14 +58,29 @@ function open(dropped = []) {
 async function choose() {
   try {
     const picked = await api('files.pick');
-    if (picked) files.value = [picked];
+    if (picked) {
+      files.value = [picked];
+      if (fileKind.value === 'manuscript') fileKind.value = guessKind(picked.name);
+    }
   } catch (e) {
     toast({ variant: 'danger', text: e.message });
   }
 }
 
 async function save() {
-  if (!files.value.length) { errors.value = { upload: ['The upload field is required.'] }; return; }
+  if (editing.value) {
+    busy.value = true;
+    try {
+      const row = await submit(errors, () => api('files.update', {
+        id: editing.value.id, kind: fileKind.value, label: fileLabel.value || null, submission_id: fileSubmission.value || null,
+      }));
+      if (row) { modal('file-form').close(); emit('saved', 'File details saved.'); }
+    } finally {
+      busy.value = false;
+    }
+    return;
+  }
+  if (!files.value.length) { errors.value = { upload: ['Choose a file first.'] }; return; }
   busy.value = true;
   try {
     let n = 0;
@@ -188,19 +227,21 @@ async function saveCopy(f) {
 }
 onBeforeUnmount(closePreview);
 
-defineExpose({ open, preview, saveCopy, quickLook: (f) => api('files.quickLook', { id: f.id }).catch((e) => toast({ variant: 'danger', text: e.message })) });
+defineExpose({ open, edit, preview, saveCopy, quickLook: (f) => api('files.quickLook', { id: f.id }).catch((e) => toast({ variant: 'danger', text: e.message })) });
 </script>
 
 <template>
     <FluxModal name="file-form" class="w-full max-w-lg">
         <form class="space-y-4" @submit.prevent="save">
-            <FluxHeading size="lg">Upload a file</FluxHeading>
-            <button type="button" class="flex w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 p-6 text-center transition hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-zinc-700 dark:hover:bg-indigo-500/5" @click="choose">
+            <FluxHeading size="lg">{{ editing ? 'File details' : 'Upload a file' }}</FluxHeading>
+            <p v-if="editing" class="truncate text-sm text-zinc-500" :title="editing.original_name">{{ editing.original_name }} · {{ editing.human_size }}</p>
+            <button v-else type="button" class="flex w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 p-6 text-center transition hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-zinc-700 dark:hover:bg-indigo-500/5" @click="choose">
                 <FluxIcon name="cloud-arrow-up" class="size-8 text-zinc-400" />
                 <span class="mt-2 text-sm font-medium">{{ files.length ? files.map((f) => f.name).join(', ') : 'Choose a file' }}</span>
                 <span class="text-xs text-zinc-500">PDF, Word, LaTeX zip… up to 50 MB · or drop files here</span>
             </button>
             <p v-if="errors.upload" class="text-sm text-rose-600">{{ errors.upload[0] }}</p>
+            <p v-if="errors.paper_id || errors.submission_id" class="text-sm text-rose-600">{{ (errors.paper_id || errors.submission_id)[0] }}</p>
             <div class="grid gap-4 sm:grid-cols-2">
                 <FluxSelect v-model="fileKind" name="kind" label="Kind"><FluxSelectOption v-for="(l, k) in FILE_KINDS" :key="k" :value="k">{{ l }}</FluxSelectOption></FluxSelect>
                 <FluxInput v-model="fileLabel" name="label" label="Label (optional)" placeholder="v3, after R1" />
@@ -209,7 +250,7 @@ defineExpose({ open, preview, saveCopy, quickLook: (f) => api('files.quickLook',
                 <FluxSelectOption value="">None</FluxSelectOption>
                 <FluxSelectOption v-for="sub in submissions" :key="sub.id" :value="sub.id">{{ sub.venue_name }}</FluxSelectOption>
             </FluxSelect>
-            <div class="flex justify-end gap-2"><FluxModalClose><FluxButton variant="ghost">Cancel</FluxButton></FluxModalClose><FluxButton type="submit" variant="primary" :disabled="busy">Upload</FluxButton></div>
+            <div class="flex justify-end gap-2"><FluxModalClose><FluxButton variant="ghost">Cancel</FluxButton></FluxModalClose><FluxButton type="submit" variant="primary" :loading="busy" :disabled="busy">{{ editing ? 'Save' : 'Upload' }}</FluxButton></div>
         </form>
     </FluxModal>
 

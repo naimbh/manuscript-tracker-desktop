@@ -118,7 +118,7 @@ const statLabels = { citations: 'Citations', h: 'h-index', i10: 'i10-index' };
                 <FluxField>
                     <FluxLabel>Research interests</FluxLabel>
                     <FluxDescription>Topics separated by commas. The daily scan uses them to find calls for papers. Leave empty to use your papers’ keywords: {{ p.suggested }}.</FluxDescription>
-                    <FluxTextarea v-model="form.interests" name="interests" rows="3" placeholder="platform labor, CSCW, ICT4D" />
+                    <FluxTextarea v-model="form.interests" name="interests" rows="3" placeholder="e.g. polymer chemistry, catalysis, green synthesis" />
                 </FluxField>
                 <FluxButton type="submit" variant="primary" :disabled="busy">Save</FluxButton>
             </form>

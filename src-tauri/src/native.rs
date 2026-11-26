@@ -36,7 +36,7 @@ pub const MENU_IDS: &[&str] = &[
     "check_updates",
 ];
 
-/// Native window material in use: `"sidebar"` (macOS vibrancy), `"mica"` (Windows 11) or `None` (solid).
+/// Native window material in use: `"sidebar"` (macOS vibrancy) or `None` (solid: Windows and Linux).
 pub fn material() -> Option<&'static str> {
     *MATERIAL.get().unwrap_or(&None)
 }
@@ -57,8 +57,10 @@ const HARDEN_SCRIPT: &str = r#"(function(){
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or_else(|| tauri::Error::WindowNotFound)?;
     let mut builder = WebviewWindowBuilder::from_config(app, &config)?;
-    // Transparent only where the OS draws a material behind the page.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    // Transparent only where the OS draws a material behind the page (macOS). Windows stays solid: with a
+    // transparent window and Mica behind it, the classic Win32 menu bar (File, View, Go, Window, Help) is drawn
+    // half see-through and its words break up.
+    #[cfg(target_os = "macos")]
     {
         builder = builder.transparent(true);
     }
@@ -102,12 +104,7 @@ fn apply_material(window: &WebviewWindow) -> Option<&'static str> {
             return Some("sidebar");
         }
     }
-    #[cfg(target_os = "windows")]
-    {
-        if window_vibrancy::apply_mica(window, None).is_ok() {
-            return Some("mica");
-        }
-    }
+    // Windows: no Mica (see `create_main_window`), so the menu bar keeps a solid background.
     None
 }
 

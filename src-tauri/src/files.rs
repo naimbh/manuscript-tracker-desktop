@@ -49,6 +49,7 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "files.chunk" => id_arg(args, "id").and_then(|id| chunk(ctx, id, args)),
         "files.quickLook" => id_arg(args, "id").and_then(|id| quick_look(ctx, id)).map(|_| json!(true)),
         "files.delete" => id_arg(args, "id").and_then(|id| delete(ctx, id)).map(|_| json!(true)),
+        "files.update" => update(args, ctx),
         _ => return None,
     })
 }
@@ -248,11 +249,40 @@ pub fn decorate(mut f: Value) -> Value {
     f
 }
 
-/// A paper's files, newest first (`$paper->files()`), decorated.
+/// Change a file's kind, label or submission: `{ id, kind, label?, submission_id? }` → the decorated row.
+fn update(args: &Value, ctx: &Ctx) -> Result<Value> {
+    let v = Validator::new(args)
+        .rule("id", "required|integer")
+        .rule("kind", &format!("required|in:{}", crate::models::keys(paper_file::KINDS)))
+        .rule("label", "nullable|string|max:120")
+        .rule("submission_id", "nullable|integer")
+        .attribute("kind", "file kind")
+        .validate()?;
+    let id = v.i64("id").unwrap_or(0);
+    let f = ctx
+        .db
+        .first("SELECT f.* FROM paper_files f JOIN papers p ON p.id = f.paper_id WHERE f.id = ?1 AND p.user_id = ?2", [id, USER_ID])?
+        .ok_or_else(ApiError::not_found)?;
+    let paper_id = f["paper_id"].as_i64().unwrap_or(0);
+    let submission_id = match v.i64("submission_id") {
+        Some(s) => Some(
+            ctx.db
+                .scalar::<i64, _>("SELECT id FROM submissions WHERE id = ?1 AND paper_id = ?2", [s, paper_id])?
+                .ok_or_else(|| ApiError::field("submission_id", "Choose a submission of this paper."))?,
+        ),
+        None => None,
+    };
+    ctx.db.update("paper_files", id, &json!({ "kind": v.string("kind"), "label": v.opt("label"), "submission_id": submission_id }))?;
+    list_for(&ctx.db, paper_id)?.into_iter().find(|r| r["id"] == json!(id)).ok_or_else(ApiError::not_found)
+}
+
+/// A paper's files, newest first (`$paper->files()`), decorated, with the venue of the submission each one
+/// belongs to (`submission_name`).
 pub fn list_for(db: &Db, paper_id: i64) -> Result<Vec<Value>> {
     Ok(db
         .rows(
-            "SELECT f.* FROM paper_files f JOIN papers p ON p.id = f.paper_id
+            "SELECT f.*, s.venue_name AS submission_name FROM paper_files f JOIN papers p ON p.id = f.paper_id
+             LEFT JOIN submissions s ON s.id = f.submission_id
              WHERE f.paper_id = ?1 AND p.user_id = ?2 ORDER BY f.created_at DESC, f.id DESC",
             [paper_id, USER_ID],
         )?
