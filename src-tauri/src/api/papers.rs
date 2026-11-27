@@ -47,6 +47,7 @@ pub fn handle(name: &str, args: &Value, ctx: &Ctx) -> Option<Result<Value>> {
         "papers.makeCurrent" => make_current(args, ctx),
         "papers.setDecision" => set_decision(args, ctx),
         "papers.deleteSubmission" => delete_submission(args, ctx),
+        "papers.removeStep" => remove_step(args, ctx),
         "papers.submitNext" => submit_next(args, ctx),
         "papers.addToQueue" => add_to_queue(args, ctx),
         "papers.removeQueue" => remove_queue(args, ctx),
@@ -230,6 +231,11 @@ pub fn detail(ctx: &Ctx, id: i64) -> Result<Value> {
              WHERE s.paper_id = ?1 ORDER BY r.position, r.id",
             [id],
         )?;
+        let steps = c.rows(
+            "SELECT st.id, st.submission_id, st.status, st.on_date FROM submission_steps st
+             JOIN submissions s ON s.id = st.submission_id WHERE s.paper_id = ?1 ORDER BY st.id",
+            [id],
+        )?;
         let queue = c.rows(
             "SELECT q.id, q.paper_id, q.venue_id, q.position, v.name AS venue_name, v.portal_url AS venue_portal_url
              FROM queue_items q JOIN venues v ON v.id = q.venue_id WHERE q.paper_id = ?1 ORDER BY q.position, q.id",
@@ -254,6 +260,10 @@ pub fn detail(ctx: &Ctx, id: i64) -> Result<Value> {
         for it in items {
             items_by.entry(i(&it, "submission_id").unwrap_or(0)).or_default().push(it);
         }
+        let mut steps_by: HashMap<i64, Vec<Value>> = HashMap::new();
+        for st in steps {
+            steps_by.entry(i(&st, "submission_id").unwrap_or(0)).or_default().push(st);
+        }
         let current = pick_current(subs.iter()).cloned();
         let current_id = current.as_ref().and_then(|c| i(c, "id"));
         let risk = current.as_ref().and_then(|cur| {
@@ -271,6 +281,7 @@ pub fn detail(ctx: &Ctx, id: i64) -> Result<Value> {
             *sub = decorated;
             if let Some(o) = sub.as_object_mut() {
                 o.insert("revision_items".into(), Value::Array(items_by.remove(&sid).unwrap_or_default()));
+                o.insert("timeline".into(), Value::Array(steps_by.remove(&sid).unwrap_or_default()));
                 o.insert("is_current_journal".into(), json!(Some(sid) == current_id));
             }
         }
@@ -513,6 +524,10 @@ fn set_decision(args: &Value, ctx: &Ctx) -> Result<Value> {
     let paper_id = ctx.db.tx(|tx| {
         let sub = own_submission(tx, id)?;
         let paper_id = i(&sub, "paper_id").unwrap_or(0);
+        // Picking the status it already has keeps its date.
+        if sub.get("decision").and_then(Value::as_str) == Some(decision.as_str()) {
+            return Ok(paper_id);
+        }
         let decision_on = if submission::is_waiting_decision(&decision) {
             Value::Null
         } else {
@@ -521,6 +536,35 @@ fn set_decision(args: &Value, ctx: &Ctx) -> Result<Value> {
         tx.update("submissions", id, &json!({ "decision": decision, "status_on": today_str(), "decision_on": decision_on }))?;
         sync_stage(tx, paper_id, id)?;
         Ok(paper_id)
+    })?;
+    detail(ctx, paper_id)
+}
+
+/// Remove a step recorded by mistake. The first ("Submitted") and the latest (the current status) stay;
+/// two same steps left side by side become one, keeping the earlier date.
+fn remove_step(args: &Value, ctx: &Ctx) -> Result<Value> {
+    let id = arg_id(args, "id")?;
+    let paper_id = ctx.db.tx(|tx| {
+        let step = tx
+            .first(
+                "SELECT st.submission_id, s.paper_id FROM submission_steps st JOIN submissions s ON s.id = st.submission_id
+                 JOIN papers p ON p.id = s.paper_id WHERE st.id = ?1 AND p.user_id = ?2",
+                [id, USER_ID],
+            )?
+            .ok_or_else(ApiError::not_found)?;
+        let sid = i(&step, "submission_id").unwrap_or(0);
+        let ends: Option<Value> = tx.first("SELECT MIN(id) AS lo, MAX(id) AS hi FROM submission_steps WHERE submission_id = ?1", [sid])?;
+        let (lo, hi) = ends.map(|e| (i(&e, "lo").unwrap_or(0), i(&e, "hi").unwrap_or(0))).unwrap_or((0, 0));
+        if id == lo || id == hi {
+            return Err(ApiError::msg("The first step and the current status stay. Change the status or the dates instead."));
+        }
+        tx.exec("DELETE FROM submission_steps WHERE id = ?1", [id])?;
+        tx.exec(
+            "DELETE FROM submission_steps WHERE submission_id = ?1 AND id <> (SELECT MIN(id) FROM submission_steps WHERE submission_id = ?1)
+               AND status = (SELECT p.status FROM submission_steps p WHERE p.submission_id = ?1 AND p.id < submission_steps.id ORDER BY p.id DESC LIMIT 1)",
+            [sid],
+        )?;
+        Ok(i(&step, "paper_id").unwrap_or(0))
     })?;
     detail(ctx, paper_id)
 }
@@ -830,6 +874,82 @@ mod tests {
         assert_eq!(copy["title"], "Trust (copy)");
         call(&ctx, "papers.delete", json!({ "id": copy["id"] })).unwrap();
         assert!(call(&ctx, "papers.get", json!({ "id": copy["id"] })).is_err());
+    }
+
+    #[test]
+    fn status_history_records_each_change() {
+        let ctx = ctx();
+        let id = call(&ctx, "papers.create", json!({ "title": "P", "stage": "ready" })).unwrap()["id"].as_i64().unwrap();
+        let d = call(
+            &ctx,
+            "papers.saveSubmission",
+            json!({
+                "paper_id": id, "venue_name": "J", "submitted_on": "2026-09-01", "decision": "submitted", "is_current": true,
+            }),
+        )
+        .unwrap();
+        let sid = d["submissions"][0]["id"].as_i64().unwrap();
+        let line = |d: &Value| -> Vec<(String, Value)> {
+            d["submissions"][0]["timeline"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|st| (st["status"].as_str().unwrap().to_string(), st["on_date"].clone()))
+                .collect()
+        };
+        assert_eq!(line(&d), vec![("submitted".into(), json!("2026-09-01"))]);
+
+        // Each new status is a step dated today; picking the same status again changes nothing.
+        call(&ctx, "papers.setDecision", json!({ "id": sid, "decision": "with_editor" })).unwrap();
+        call(&ctx, "papers.setDecision", json!({ "id": sid, "decision": "with_editor" })).unwrap();
+        let d = call(&ctx, "papers.setDecision", json!({ "id": sid, "decision": "pending" })).unwrap();
+        let t = today_str();
+        assert_eq!(
+            line(&d),
+            vec![("submitted".into(), json!("2026-09-01")), ("with_editor".into(), json!(t)), ("pending".into(), json!(t))]
+        );
+
+        // Switching straight back undoes the mistaken step.
+        call(&ctx, "papers.setDecision", json!({ "id": sid, "decision": "reject" })).unwrap();
+        let d = call(&ctx, "papers.setDecision", json!({ "id": sid, "decision": "pending" })).unwrap();
+        assert_eq!(line(&d).len(), 3);
+
+        // Correcting the dates in the form moves the first and the latest step.
+        let mut sub = d["submissions"][0].clone();
+        sub["paper_id"] = json!(id);
+        sub["submitted_on"] = json!("2026-08-30");
+        sub["status_on"] = json!("2026-10-02");
+        let d = call(&ctx, "papers.saveSubmission", sub).unwrap();
+        assert_eq!(line(&d)[0].1, json!("2026-08-30"));
+        assert_eq!(line(&d)[2].1, json!("2026-10-02"));
+
+        // A decision recorded in the form uses its decision date.
+        let mut sub = d["submissions"][0].clone();
+        sub["paper_id"] = json!(id);
+        sub["decision"] = json!("major");
+        sub["decision_on"] = json!("2026-11-20");
+        let d = call(&ctx, "papers.saveSubmission", sub).unwrap();
+        assert_eq!(line(&d)[3], ("major".into(), json!("2026-11-20")));
+
+        // A middle step can go; the first and the current one cannot.
+        let steps = d["submissions"][0]["timeline"].as_array().unwrap().clone();
+        assert!(call(&ctx, "papers.removeStep", json!({ "id": steps[0]["id"] })).is_err());
+        assert!(call(&ctx, "papers.removeStep", json!({ "id": steps[3]["id"] })).is_err());
+        let d = call(&ctx, "papers.removeStep", json!({ "id": steps[1]["id"] })).unwrap();
+        assert_eq!(line(&d).iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["submitted", "pending", "major"]);
+
+        // A submission recorded as already under review starts with two steps.
+        let d = call(&ctx, "papers.saveSubmission", json!({
+            "paper_id": id, "venue_name": "K", "submitted_on": "2026-01-10", "status_on": "2026-02-01", "decision": "pending", "is_current": true,
+        }))
+        .unwrap();
+        let k = d["submissions"].as_array().unwrap().iter().find(|s| s["venue_name"] == "K").unwrap().clone();
+        let statuses: Vec<_> = k["timeline"].as_array().unwrap().iter().map(|st| (st["status"].clone(), st["on_date"].clone())).collect();
+        assert_eq!(statuses, vec![(json!("submitted"), json!("2026-01-10")), (json!("pending"), json!("2026-02-01"))]);
+
+        // Deleting the paper takes the history with it.
+        call(&ctx, "papers.delete", json!({ "id": id })).unwrap();
+        assert_eq!(ctx.db.scalar::<i64, _>("SELECT COUNT(*) FROM submission_steps", []).unwrap(), Some(0));
     }
 
     #[test]

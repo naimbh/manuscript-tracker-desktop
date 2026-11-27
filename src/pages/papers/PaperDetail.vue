@@ -10,7 +10,7 @@ import { confirmDialog, contextMenu } from '@/lib/native.js';
 import { isMac, isWindows } from '@/lib/platform.js';
 import { currentRoute, route, setQuery } from '@/lib/router.js';
 import { toast } from '@/lib/toast.js';
-import { cache, copyText, FILE_GRADIENT, ICON_OF, openExternal, papersChanged, pending, PILL, RING_TONE, takePending, utc } from './state.js';
+import { cache, copyText, DOT, FILE_GRADIENT, ICON_OF, openExternal, papersChanged, pending, PILL, RING_TONE, takePending, utc } from './state.js';
 import { moveItem, startSort } from './sortable.js';
 import PaperForm from './PaperForm.vue';
 import SubmissionForm from './SubmissionForm.vue';
@@ -149,6 +149,19 @@ const copied = ref(false);
 function editPaper() { paperForm.value?.open(p.value); }
 function setStage(k) { act('papers.setStage', { id: props.id, stage: k }, `Stage set to ${STAGES[k]}.`); }
 function onSaved(d, msg) { changed(d, msg); }
+
+/* ---------- status history: one line of steps on each submission card ---------- */
+const hasTimeline = (s) => (s.timeline?.length ?? 0) > 1;
+const stepLabel = (st, k) => (st.status === 'submitted' && k > 0 ? 'Resubmitted' : DECISIONS[st.status] ?? st.status);
+const stepDate = (d) => format(d, String(d).slice(0, 4) === String(new Date().getFullYear()) ? 'j M' : 'j M Y');
+/** Days from one step to the next, when both have dates. */
+function stepGap(line, k) {
+  const a = line[k]?.on_date, b = line[k + 1]?.on_date;
+  if (!a || !b) return null;
+  const d = Math.round(diffInDays(a, b));
+  return d >= 0 ? d : null;
+}
+function removeStep(st) { act('papers.removeStep', { id: st.id }, 'Step removed from the history.'); }
 
 /* ---------- submissions ---------- */
 function newSubmission() { subForm.value?.open(null); }
@@ -444,7 +457,7 @@ onBeforeUnmount(() => { ro?.disconnect(); offs.forEach((f) => f()); stopEnter?.(
                                         <div class="min-w-0">
                                             <div class="flex flex-wrap items-center gap-2"><h3 class="font-semibold">{{ entry.sub.venue_name }}</h3><UiDecision :s="entry.sub" /><span v-if="entry.isCur" class="rounded-md px-1.5 py-px text-[10px] font-semibold tracking-wide text-indigo-700 uppercase ring-1 ring-indigo-200 ring-inset dark:text-indigo-300 dark:ring-indigo-500/30">Current</span></div>
                                             <p class="mt-0.5 text-sm text-zinc-500">
-                                                {{ entry.sub.manuscript_id || 'No manuscript ID' }} · Submitted {{ entry.sub.submitted_on ? format(entry.sub.submitted_on, 'j M Y') : 'date not set' }}<template v-if="entry.sub.status_on"> · {{ DECISIONS[entry.sub.decision] }} since {{ format(entry.sub.status_on, 'j M Y') }}</template><template v-if="entry.sub.decision_on && !isWaiting(entry.sub)"> → {{ format(entry.sub.decision_on, 'j M Y') }}</template><template v-if="entry.sub.days !== null"> · <span class="num">{{ entry.sub.days }}</span> days</template>
+                                                {{ entry.sub.manuscript_id || 'No manuscript ID' }}<template v-if="!hasTimeline(entry.sub)"> · Submitted {{ entry.sub.submitted_on ? format(entry.sub.submitted_on, 'j M Y') : 'date not set' }}<template v-if="entry.sub.status_on"> · {{ DECISIONS[entry.sub.decision] }} since {{ format(entry.sub.status_on, 'j M Y') }}</template><template v-if="entry.sub.decision_on && !isWaiting(entry.sub)"> → {{ format(entry.sub.decision_on, 'j M Y') }}</template></template><template v-if="entry.sub.days !== null"> · <span class="num">{{ entry.sub.days }}</span> days</template>
                                             </p>
                                         </div>
                                         <div class="flex flex-wrap items-center gap-1">
@@ -458,6 +471,22 @@ onBeforeUnmount(() => { ro?.disconnect(); offs.forEach((f) => f()); stopEnter?.(
                                             <FluxButton size="sm" variant="ghost" icon="pencil-square" aria-label="Edit submission" @click="editSubmission(entry.sub)" />
                                         </div>
                                     </div>
+                                    <ol v-if="hasTimeline(entry.sub)" class="mt-3 flex flex-wrap items-start gap-y-2.5 select-none" aria-label="Status history">
+                                        <li v-for="(st, k) in entry.sub.timeline" :key="'st' + st.id" class="group/step flex items-start">
+                                            <div class="flex flex-col">
+                                                <div class="relative flex items-center gap-1.5">
+                                                    <span :class="['shrink-0 rounded-full', k === entry.sub.timeline.length - 1 ? 'size-2.5 ring-[3px] ' + RING_TONE[tone(st.status)] : 'size-2 ' + DOT[tone(st.status)]]"></span>
+                                                    <span :class="['text-xs whitespace-nowrap', k === entry.sub.timeline.length - 1 ? 'font-semibold text-zinc-900 dark:text-white' : 'text-zinc-600 dark:text-zinc-300']">{{ stepLabel(st, k) }}</span>
+                                                    <button v-if="k > 0 && k < entry.sub.timeline.length - 1" type="button" class="absolute top-0.5 -right-4 rounded text-zinc-300 opacity-0 transition group-hover/step:opacity-100 hover:text-rose-500 focus-visible:opacity-100 dark:text-zinc-600" :aria-label="`Remove ${stepLabel(st, k)} from the history`" title="Remove this step" @click="removeStep(st)"><FluxIcon name="x-mark" variant="micro" class="size-3" /></button>
+                                                </div>
+                                                <span class="num mt-0.5 pl-3.5 text-[11px] text-zinc-400">{{ st.on_date ? stepDate(st.on_date) : 'date not set' }}</span>
+                                            </div>
+                                            <div v-if="k < entry.sub.timeline.length - 1" class="mx-1.5 flex w-8 shrink-0 flex-col items-center" :title="stepGap(entry.sub.timeline, k) !== null ? `${stepGap(entry.sub.timeline, k)} ${plural('day', stepGap(entry.sub.timeline, k))} between these steps` : null">
+                                                <span class="mt-[7px] h-px w-full bg-zinc-200 dark:bg-zinc-700"></span>
+                                                <span v-if="stepGap(entry.sub.timeline, k) !== null" class="num mt-[7px] text-[10px] leading-none text-zinc-400">{{ stepGap(entry.sub.timeline, k) }}d</span>
+                                            </div>
+                                        </li>
+                                    </ol>
                                     <div class="mt-2.5 flex flex-wrap items-center gap-1.5 select-none">
                                         <button v-for="f in filesOf(entry.sub)" :key="'sf' + f.id" type="button" class="inline-flex max-w-full items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700 transition hover:bg-indigo-50 hover:text-indigo-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-300" :title="`${f.original_name} — preview`" @click="preview(f)" @contextmenu.prevent.stop="fileMenu(f)">
                                             <FluxIcon name="paper-clip" variant="micro" class="size-3.5 shrink-0" /><span class="truncate">{{ f.label || f.original_name }}</span><span class="shrink-0 text-zinc-400">{{ FILE_KINDS[f.kind] ?? f.kind_label }}</span>

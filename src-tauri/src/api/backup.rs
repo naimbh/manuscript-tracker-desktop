@@ -205,6 +205,12 @@ pub fn export_full(conn: &Connection, files_root: Option<&Path>) -> Result<(Valu
                 })
                 .collect();
             so.insert("revision_items".into(), Value::Array(items));
+            let steps: Vec<Value> = conn
+                .rows("SELECT status, on_date FROM submission_steps WHERE submission_id = ?1 ORDER BY id", [sid])?
+                .into_iter()
+                .map(|st| json!({ "status": st["status"], "on_date": norm_date(&st["on_date"]) }))
+                .collect();
+            so.insert("steps".into(), Value::Array(steps));
             subs.push(Value::Object(so));
         }
         let queue: Vec<Value> = conn
@@ -590,6 +596,20 @@ pub fn import_data<R: Read + Seek>(db: &Db, data: &Value, mut files: Option<File
                     row.insert("venue_name".into(), json!(s["venue"].as_str().unwrap_or("")));
                 }
                 let sid = tx.insert("submissions", &Value::Object(row))?;
+                // The status history from the file replaces the two steps the insert started with.
+                let steps: Vec<&Value> = s["steps"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|st| st["status"].as_str().is_some_and(|k| crate::models::submission::DECISIONS.iter().any(|(d, _)| *d == k)))
+                    .collect();
+                if !steps.is_empty() {
+                    tx.exec("DELETE FROM submission_steps WHERE submission_id = ?1", [sid])?;
+                    for st in steps {
+                        let on = str_of(&st["on_date"]).filter(|d| crate::util::parse_date(d).is_some());
+                        tx.insert("submission_steps", &json!({ "submission_id": sid, "status": st["status"], "on_date": on }))?;
+                    }
+                }
                 for (i, r) in s["revision_items"].as_array().into_iter().flatten().enumerate() {
                     let mut row = clean(tx, "revision_items", r, STRIP, &[], &[], &["done"])?;
                     if !row.contains_key("comment") {
@@ -1031,6 +1051,18 @@ pub fn restore_copy(db: &Db, file: &Path) -> Result<()> {
                     }
                     let list = cols.join(", ");
                     conn.execute(&format!("INSERT INTO main.{t} ({list}) SELECT {list} FROM snap.{t}"), [])?;
+                }
+                // Copying submissions fired the status-history triggers: keep the copy's own history,
+                // or start one for a copy made before the history existed.
+                conn.execute("DELETE FROM main.submission_steps", [])?;
+                if snap_tables.iter().any(|t| t == "submission_steps") {
+                    conn.execute(
+                        "INSERT INTO main.submission_steps (id, submission_id, status, on_date, created_at, updated_at)
+                         SELECT id, submission_id, status, on_date, created_at, updated_at FROM snap.submission_steps",
+                        [],
+                    )?;
+                } else {
+                    conn.execute_batch(crate::db::STEPS_BACKFILL)?;
                 }
                 Ok(())
             })();
@@ -1594,6 +1626,14 @@ mod tests {
         // v1 wrote dates as Laravel ISO timestamps, v2 as plain dates: compare them as dates.
         assert_eq!(got["venues"][0]["deadline_on"], norm_date(&fixture["venues"][0]["deadline_on"]));
         assert_eq!(got["papers"][0]["started_on"], norm_date(&fixture["papers"][0]["started_on"]));
+        // Web backups have no status history: each submission starts with "Submitted" and its current status.
+        assert_eq!(
+            got["papers"][0]["submissions"][0]["steps"],
+            json!([{ "status": "submitted", "on_date": "2026-10-01" }, { "status": "pending", "on_date": "2026-10-05" }])
+        );
+        for sub in got["papers"][0]["submissions"].as_array_mut().unwrap() {
+            sub.as_object_mut().unwrap().remove("steps");
+        }
         for x in [&mut fixture, &mut got] {
             x["venues"][0].as_object_mut().unwrap().remove("deadline_on");
             x["papers"][0].as_object_mut().unwrap().remove("started_on");
@@ -1660,6 +1700,60 @@ mod tests {
         let err = import_data::<std::fs::File>(&db, &json!({ "app": "other" }), None).unwrap_err();
         let err = serde_json::to_value(err).unwrap();
         assert_eq!(err["errors"]["backup"][0], NOT_A_BACKUP);
+    }
+
+    #[test]
+    fn status_history_survives_backups() {
+        let tmp = std::env::temp_dir().join(format!("mt-steps-test-{}", random_token(8)));
+        std::fs::create_dir_all(tmp.join("files")).unwrap();
+        let journey = |db: &Db| -> Vec<(String, String)> {
+            db.rows("SELECT status, on_date FROM submission_steps ORDER BY id", [])
+                .unwrap()
+                .iter()
+                .map(|r| (r["status"].as_str().unwrap().to_string(), r["on_date"].as_str().unwrap_or("").to_string()))
+                .collect()
+        };
+        let full = vec![
+            ("submitted".to_string(), "2026-01-02".to_string()),
+            ("with_editor".to_string(), "2026-01-05".to_string()),
+            ("pending".to_string(), "2026-02-01".to_string()),
+        ];
+        let fill = |db: &Db| {
+            let pid = db.insert("papers", &json!({ "user_id": 1, "title": "Steps" })).unwrap();
+            let sid = db
+                .insert(
+                    "submissions",
+                    &json!({ "paper_id": pid, "venue_name": "J", "submitted_on": "2026-01-02", "decision": "submitted" }),
+                )
+                .unwrap();
+            db.exec("UPDATE submissions SET decision = 'with_editor', status_on = '2026-01-05' WHERE id = ?1", [sid]).unwrap();
+            db.exec("UPDATE submissions SET decision = 'pending', status_on = '2026-02-01' WHERE id = ?1", [sid]).unwrap();
+        };
+
+        // Export and JSON import keep every step, not only the two a new submission starts with.
+        let db = test_db();
+        fill(&db);
+        let data = db.with(export_data).unwrap();
+        assert_eq!(data["papers"][0]["submissions"][0]["steps"].as_array().unwrap().len(), 3);
+        let json_path = tmp.join("b.json");
+        std::fs::write(&json_path, to_pretty(&data).unwrap()).unwrap();
+        let db2 = test_db();
+        import_path(&Ctx::for_tests(db2.clone()), &json_path, &tmp.join("files")).unwrap();
+        assert_eq!(journey(&db2), full);
+
+        // A local copy brings back its own history; a copy made before the history existed starts one.
+        let file_db = Db::open(&tmp.join("tracker.sqlite")).unwrap();
+        file_db.insert("users", &json!({ "id": 1, "name": "Copy", "is_admin": true })).unwrap();
+        fill(&file_db);
+        let dir = backups_dir(&tmp);
+        let copy = dir.join(make_copy(&file_db, &dir).unwrap()["name"].as_str().unwrap());
+        file_db.exec("UPDATE submissions SET decision = 'reject', decision_on = '2026-03-01'", []).unwrap();
+        restore_copy(&file_db, &copy).unwrap();
+        assert_eq!(journey(&file_db), full);
+        rusqlite::Connection::open(&copy).unwrap().execute_batch("DROP TABLE submission_steps;").unwrap();
+        restore_copy(&file_db, &copy).unwrap();
+        assert_eq!(journey(&file_db), vec![full[0].clone(), full[2].clone()]);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

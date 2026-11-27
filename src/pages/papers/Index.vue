@@ -309,7 +309,7 @@ watch(list, () => { if (cursor.value >= list.value.length) cursor.value = list.v
                     <div v-if="p.current" class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500">
                         <span v-if="p.current.manuscript_id" class="font-mono text-zinc-600 dark:text-zinc-300">{{ p.current.manuscript_id }}</span>
                         <span v-if="p.current.submitted_on">Sent {{ format(p.current.submitted_on, 'j M') }}</span>
-                        <span v-if="p.current.status_on">· {{ DECISIONS[p.current.decision] }} {{ format(p.current.status_on, 'j M') }}</span>
+                        <span v-if="isWaiting(p.current) ? p.current.status_on : p.current.decision_on || p.current.status_on">· {{ DECISIONS[p.current.decision] }} {{ format(isWaiting(p.current) ? p.current.status_on : p.current.decision_on || p.current.status_on, 'j M') }}</span>
                         <span v-if="isWaiting(p.current) && p.current.days !== null" :class="['num ml-auto font-semibold', p.current.clock?.overdue ? 'text-rose-500' : 'text-zinc-600 dark:text-zinc-300']">{{ p.current.days }}d</span>
                     </div>
                     <div v-if="p.current?.clock" class="clock-track mt-2 !h-1 !bg-white/70 dark:!bg-zinc-800"><div :class="['clock-fill grow-x', p.current.clock.overdue ? 'bg-rose-500' : 'bg-indigo-400/80']" :style="`width: ${p.current.clock.pct}%`"></div></div>

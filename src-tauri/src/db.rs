@@ -29,10 +29,98 @@ const JSON_NAMES: &[&str] = &["roles", "tags", "sources", "scholar_stats"];
 
 /// Schema versions, applied in order and tracked with `PRAGMA user_version`.
 /// To change the schema, APPEND a new entry (never edit an old one).
-pub const MIGRATIONS: &[&str] = &[SCHEMA_V1, crate::research::MIGRATION, AVATAR];
+pub const MIGRATIONS: &[&str] = &[SCHEMA_V1, crate::research::MIGRATION, AVATAR, STEPS, STEPS_BACKFILL];
 
 /// Profile photo: `avatars/<name>` relative to the app data folder (see `files::save_avatar`).
 const AVATAR: &str = "ALTER TABLE users ADD COLUMN avatar_path TEXT NULL;";
+
+/// Statuses that mean the paper is still with the journal (`Submission::WAITING`), as an SQL list.
+macro_rules! waiting_sql {
+    () => {
+        "('submitted', 'with_editor', 'pending', 'awaiting_decision', 'returned')"
+    };
+}
+
+/// Status history: one row each time a submission's status changes, kept by triggers so every path
+/// (paper page, Desk, MCP tools, backup import) records it. Switching back within ten minutes undoes the step.
+const STEPS: &str = concat!(
+    r#"
+CREATE TABLE submission_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    submission_id INTEGER NOT NULL REFERENCES submissions (id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    on_date TEXT NULL,
+    created_at TEXT NULL,
+    updated_at TEXT NULL
+);
+CREATE INDEX submission_steps_submission_id_index ON submission_steps (submission_id);
+
+CREATE TRIGGER submission_steps_on_insert AFTER INSERT ON submissions BEGIN
+    INSERT INTO submission_steps (submission_id, status, on_date, created_at, updated_at)
+        VALUES (NEW.id, 'submitted', NEW.submitted_on, datetime('now'), datetime('now'));
+    INSERT INTO submission_steps (submission_id, status, on_date, created_at, updated_at)
+        SELECT NEW.id, NEW.decision,
+               CASE WHEN NEW.decision IN "#,
+    waiting_sql!(),
+    r#" THEN NEW.status_on ELSE COALESCE(NEW.decision_on, NEW.status_on) END,
+               datetime('now'), datetime('now')
+        WHERE NEW.decision <> 'submitted';
+END;
+
+CREATE TRIGGER submission_steps_on_status AFTER UPDATE OF decision ON submissions
+WHEN NEW.decision IS NOT OLD.decision BEGIN
+    DELETE FROM submission_steps
+     WHERE id = (SELECT MAX(id) FROM submission_steps WHERE submission_id = NEW.id)
+       AND created_at >= datetime('now', '-10 minutes')
+       AND (SELECT status FROM submission_steps WHERE submission_id = NEW.id ORDER BY id DESC LIMIT 1 OFFSET 1) = NEW.decision;
+    INSERT INTO submission_steps (submission_id, status, on_date, created_at, updated_at)
+        SELECT NEW.id, NEW.decision,
+               CASE
+                   WHEN NEW.decision NOT IN "#,
+    waiting_sql!(),
+    r#" AND NEW.decision_on IS NOT NULL AND NEW.decision_on IS NOT OLD.decision_on THEN NEW.decision_on
+                   WHEN NEW.status_on IS NOT NULL AND NEW.status_on IS NOT OLD.status_on THEN NEW.status_on
+                   ELSE date('now', 'localtime')
+               END,
+               datetime('now'), datetime('now')
+        WHERE (SELECT status FROM submission_steps WHERE submission_id = NEW.id ORDER BY id DESC LIMIT 1) IS NOT NEW.decision;
+END;
+
+CREATE TRIGGER submission_steps_on_dates AFTER UPDATE OF submitted_on, status_on, decision_on ON submissions
+WHEN NEW.decision IS OLD.decision BEGIN
+    UPDATE submission_steps SET on_date = NEW.submitted_on, updated_at = datetime('now')
+     WHERE NEW.submitted_on IS NOT OLD.submitted_on
+       AND id = (SELECT MIN(id) FROM submission_steps WHERE submission_id = NEW.id)
+       AND status = 'submitted';
+    UPDATE submission_steps
+       SET on_date = CASE WHEN NEW.decision IN "#,
+    waiting_sql!(),
+    r#" THEN NEW.status_on ELSE NEW.decision_on END, updated_at = datetime('now')
+     WHERE id = (SELECT MAX(id) FROM submission_steps WHERE submission_id = NEW.id)
+       AND id > (SELECT MIN(id) FROM submission_steps WHERE submission_id = NEW.id)
+       AND status = NEW.decision
+       AND CASE WHEN NEW.decision IN "#,
+    waiting_sql!(),
+    r#"
+                THEN NEW.status_on IS NOT NULL AND NEW.status_on IS NOT OLD.status_on
+                ELSE NEW.decision_on IS NOT NULL AND NEW.decision_on IS NOT OLD.decision_on END;
+END;
+"#
+);
+
+/// Starts the history of submissions made before it existed: "Submitted", then the current status.
+pub const STEPS_BACKFILL: &str = concat!(
+    r#"
+INSERT INTO submission_steps (submission_id, status, on_date, created_at, updated_at)
+    SELECT id, 'submitted', submitted_on, COALESCE(created_at, datetime('now')), datetime('now') FROM submissions ORDER BY id;
+INSERT INTO submission_steps (submission_id, status, on_date, created_at, updated_at)
+    SELECT id, decision, CASE WHEN decision IN "#,
+    waiting_sql!(),
+    r#" THEN status_on ELSE COALESCE(decision_on, status_on) END,
+           COALESCE(created_at, datetime('now')), datetime('now')
+    FROM submissions WHERE decision <> 'submitted' ORDER BY id;
+"#
+);
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE users (

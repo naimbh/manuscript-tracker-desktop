@@ -208,11 +208,16 @@ fn get_paper(conn: &Connection, args: &Value) -> R {
                 .into_iter()
                 .map(|i| json!({ "comment": i["comment"], "done": i["done"], "response": i["response"] }))
                 .collect();
+        let history: Vec<Value> = db(conn
+            .rows("SELECT status, on_date FROM submission_steps WHERE submission_id = ?1 ORDER BY id", [&s["id"].as_i64().unwrap_or(0)]))?
+        .into_iter()
+        .map(|st| json!({ "status": st["status"], "on": st["on_date"] }))
+        .collect();
         subs.push(json!({
             "id": s["id"], "venue": s["venue_name"], "manuscript_id": s["manuscript_id"], "submitted_on": s["submitted_on"],
             "status_since": s["status_on"], "decision": s["decision"], "decision_on": s["decision_on"],
             "revision_due_on": s["revision_due_on"], "current": s["is_current"], "portal": s["portal_url"], "note": s["note"],
-            "reviewer_comments": items,
+            "reviewer_comments": items, "status_history": history,
         }));
     }
     let queue: Vec<Value> =

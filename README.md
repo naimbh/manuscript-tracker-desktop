@@ -41,7 +41,7 @@ The screenshots show fictional demo data.
 ## Features
 
 - **Papers and submissions.** Track every manuscript from first draft to publication, with co-authors and CRediT roles, files, keywords and notes.
-- **Peer review status.** Record each journal or conference submission with its manuscript ID, portal link, status and editor decision, and see a paper’s whole journey at a glance.
+- **Peer review status.** Record each journal or conference submission with its manuscript ID, portal link, status and editor decision, and see a paper’s whole journey at a glance. Each submission keeps a dated timeline of its statuses (submitted, with the editor, under review, decision) and shows how many days each step took.
 - **Review clocks.** See how long each paper has been under review compared with the journal’s or conference’s usual decision time.
 - **Revisions and deadlines.** Answer reviewer comments one by one, track revision due dates, and keep conference deadlines in one list with a calendar feed.
 - **Journals & Conferences.** A library of journals and conferences with deadlines, decision times, acceptance rates, review type, fees and word limits, plus a queue of where each paper goes next.
